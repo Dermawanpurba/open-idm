@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenIDM Sniffer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <div class="brand">
+        <span class="logo">Open<span>IDM</span></span>
+      </div>
+      <div id="status-indicator" class="status-indicator offline">
+        <span class="dot"></span>
+        <span class="text" id="status-text">Memeriksa Core...</span>
+      </div>
+    </header>
+
+    <div class="quick-action-bar">
+      <button id="btn-open-dashboard" class="btn btn-primary btn-block">Buka Dashboard Desktop</button>
+    </div>
+
+    <section class="media-section">
+      <div class="section-title">Media Terdeteksi di Halaman Ini:</div>
+      <div id="media-list" class="media-list">
+        <div class="loading-state">Mencari media...</div>
+      </div>
+    </section>
+
+    <footer class="popup-footer">
+      <span>OpenIDM • Open Source Video Downloader</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

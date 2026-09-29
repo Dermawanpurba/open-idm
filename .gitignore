@@ -1,0 +1,27 @@
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Large binaries (download on demand or via installer)
+bin/ffmpeg.exe
+bin/*.exe
+
+# Temporary chunks or test scripts
+*.chunks/
+*.tmp
+test_*.py
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

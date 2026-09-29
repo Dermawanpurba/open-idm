@@ -1,0 +1,232 @@
+/* OpenIDM Floating Video Panel Styles */
+
+.openidm-floating-panel {
+  position: absolute !important;
+  top: 12px !important;
+  right: 14px !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  font-size: 12px !important;
+  line-height: normal !important;
+  box-sizing: border-box !important;
+  user-select: none !important;
+}
+
+/* Main Pill Button */
+.openidm-btn-pill {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, #E2E8F0 100%) !important;
+  border: 1px solid #94A3B8 !important;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+  padding: 4px 10px !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  color: #1E293B !important;
+  font-weight: 600 !important;
+}
+
+.openidm-btn-pill:hover {
+  background: linear-gradient(180deg, #F8FAFC 0%, #CBD5E1 100%) !important;
+  border-color: #64748B !important;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35) !important;
+  transform: translateY(-1px) !important;
+}
+
+.openidm-btn-pill:active {
+  transform: translateY(0) !important;
+  background: #CBD5E1 !important;
+}
+
+.openidm-play-icon {
+  width: 14px !important;
+  height: 14px !important;
+  color: #16A34A !important; /* Classic IDM Green Play Icon */
+  flex-shrink: 0 !important;
+}
+
+.openidm-btn-text {
+  font-size: 12px !important;
+  color: #0F172A !important;
+  letter-spacing: -0.2px !important;
+}
+
+.openidm-arrow-icon {
+  width: 12px !important;
+  height: 12px !important;
+  color: #475569 !important;
+  margin-left: 2px !important;
+  flex-shrink: 0 !important;
+}
+
+/* Close button [x] */
+.openidm-close-btn {
+  background: rgba(226, 232, 240, 0.9) !important;
+  border: 1px solid #94A3B8 !important;
+  color: #475569 !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  padding: 4px 6px !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.openidm-close-btn:hover {
+  background: #EF4444 !important;
+  color: #FFFFFF !important;
+  border-color: #DC2626 !important;
+}
+
+/* Dropdown Menu */
+.openidm-dropdown {
+  position: absolute !important;
+  top: calc(100% + 6px) !important;
+  right: 0 !important;
+  width: 290px !important;
+  background: #0F172A !important;
+  color: #F8FAFC !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
+  overflow: hidden !important;
+  display: none !important;
+  flex-direction: column !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.openidm-dropdown.open {
+  display: flex !important;
+}
+
+.openidm-dropdown-header {
+  padding: 8px 12px !important;
+  background: #1E293B !important;
+  border-bottom: 1px solid #334155 !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #94A3B8 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+.openidm-dropdown-list {
+  max-height: 240px !important;
+  overflow-y: auto !important;
+}
+
+.openidm-dropdown-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 8px 12px !important;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4) !important;
+  cursor: pointer !important;
+  transition: background 0.15s ease !important;
+}
+
+.openidm-dropdown-item:last-child {
+  border-bottom: none !important;
+}
+
+.openidm-dropdown-item:hover {
+  background: #1E293B !important;
+}
+
+.openidm-item-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  overflow: hidden !important;
+}
+
+.openidm-badge-res {
+  background: #2563EB !important;
+  color: #FFFFFF !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+  flex-shrink: 0 !important;
+}
+
+.openidm-item-label {
+  font-size: 12px !important;
+  color: #F1F5F9 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.openidm-item-size {
+  font-size: 11px !important;
+  color: #94A3B8 !important;
+  flex-shrink: 0 !important;
+  margin-left: 6px !important;
+}
+
+.openidm-loading-item,
+.openidm-empty-item,
+.openidm-error-item {
+  padding: 14px 12px !important;
+  font-size: 12px !important;
+  text-align: center !important;
+  color: #94A3B8 !important;
+}
+
+.openidm-retry-btn {
+  margin-top: 8px !important;
+  background: #2563EB !important;
+  color: #FFF !important;
+  border: none !important;
+  padding: 4px 12px !important;
+  border-radius: 4px !important;
+  font-size: 11px !important;
+  cursor: pointer !important;
+}
+
+/* Toast In-Page Notification */
+.openidm-toast {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  background: #1E293B !important;
+  color: #F8FAFC !important;
+  border: 1px solid #334155 !important;
+  padding: 10px 18px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  z-index: 2147483647 !important;
+  opacity: 0 !important;
+  transform: translateY(20px) !important;
+  transition: all 0.3s ease !important;
+  pointer-events: none !important;
+}
+
+.openidm-toast.show {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
+.openidm-toast-success {
+  border-left: 4px solid #10B981 !important;
+}
+
+.openidm-toast-info {
+  border-left: 4px solid #3B82F6 !important;
+}
+
+.openidm-toast-error {
+  border-left: 4px solid #EF4444 !important;
+}
