@@ -346,17 +346,39 @@ class DownloadTask:
         ffmpeg_exe = get_ffmpeg_path()
         node_exe = get_node_path()
 
-        # Smart format selection for yt-dlp:
-        # Never pass plain "best" to yt-dlp on YouTube/modern streams because modern streams require video+audio merging!
-        if not self.format_id or self.format_id in ["best", "direct", "original"]:
-            chosen_format = "bestvideo*+bestaudio/best"
-        elif "/" in self.format_id or "+" in self.format_id:
-            chosen_format = f"{self.format_id}/bestvideo*+bestaudio/best"
+        # Extract target height/resolution if user selected one (e.g. [480p] or 480p)
+        m_res = re.search(r'\[?(\d{3,4})p\]?', self.filename or "")
+        target_h = int(m_res.group(1)) if m_res else None
+        if not target_h and self.format_id:
+            m_fmt = re.search(r'(\d{3,4})p', self.format_id)
+            if m_fmt:
+                target_h = int(m_fmt.group(1))
+
+        # Build height-constrained fallback so yt-dlp never silently jumps from 480p to 1080p
+        if target_h:
+            height_fallback = f"bestvideo*[height<={target_h}]+bestaudio/best[height<={target_h}]"
         else:
-            chosen_format = f"{self.format_id}+bestaudio/bestvideo*+bestaudio/best"
+            height_fallback = "bestvideo*+bestaudio/best"
+
+        # Smart format selection for yt-dlp
+        is_audio = self.category == "Music" or "audio" in (self.format_id or "").lower()
+
+        if is_audio:
+            chosen_format = self.format_id if (self.format_id and self.format_id != "best") else "bestaudio/best"
+        elif not self.format_id or self.format_id in ["best", "direct", "original"]:
+            chosen_format = height_fallback
+        elif "/" in self.format_id or "+" in self.format_id:
+            base_fid = self.format_id.split("+")[0].split("/")[0]
+            clean_fmt = re.sub(r'/(?:bestvideo\*?\+bestaudio|best)$', '', self.format_id)
+            chosen_format = f"{clean_fmt}/{base_fid}/{height_fallback}"
+        else:
+            chosen_format = f"{self.format_id}+bestaudio/{self.format_id}/{height_fallback}"
 
         if not ffmpeg_exe and "+" in chosen_format:
-            chosen_format = "best[ext=mp4]/best"
+            if target_h:
+                chosen_format = f"best[height<={target_h}][ext=mp4]/best[height<={target_h}]"
+            else:
+                chosen_format = "best[ext=mp4]/best"
 
         out_template = str(Path(self.filepath).with_suffix("")) + ".%(ext)s"
         ydl_opts = {
@@ -401,7 +423,10 @@ class DownloadTask:
         except Exception as dl_err:
             err_str = str(dl_err).lower()
             if "postprocessing" in err_str or "invalid data" in err_str or "requested format" in err_str:
-                ydl_opts["format"] = "best[ext=mp4]/best"
+                if target_h:
+                    ydl_opts["format"] = f"bestvideo*[height<={target_h}]+bestaudio/best[height<={target_h}][ext=mp4]/best[height<={target_h}]"
+                else:
+                    ydl_opts["format"] = "best[ext=mp4]/best"
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(self.url, download=True)
             else:

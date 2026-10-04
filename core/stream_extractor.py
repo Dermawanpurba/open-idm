@@ -399,7 +399,7 @@ class StreamExtractor:
                         f_size = cls.estimate_format_size(f, duration=duration, audio_size=audio_size)
 
                         qualities.append({
-                            "format_id": f"{format_id}+bestaudio/best" if f.get("acodec") == "none" else format_id,
+                            "format_id": f"{format_id}+bestaudio/{format_id}" if f.get("acodec") == "none" else format_id,
                             "quality": f"{res_label} ({ext.upper()})",
                             "resolution": res_label,
                             "ext": "mp4" if ext == "webm" else ext,
