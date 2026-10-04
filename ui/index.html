@@ -207,6 +207,37 @@
     </div>
   </div>
 
+  <!-- Modal Detail Error -->
+  <div id="error-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header" style="border-bottom-color: rgba(239, 68, 68, 0.3);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="color: var(--color-danger); font-size: 1.25rem;">⚠️</span>
+          <h3 id="error-modal-title">Detail Kendala Unduhan</h3>
+        </div>
+        <button class="btn-close" onclick="hideErrorModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p style="color: var(--color-text-muted); font-size: 0.88rem; margin-bottom: 0.75rem;">
+          OpenIDM menemui kendala saat mengambil atau memproses stream media:
+        </p>
+        <div id="error-modal-msg" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: var(--radius-sm); padding: 0.85rem; font-family: monospace; font-size: 0.8rem; color: #FCA5A5; max-height: 200px; overflow-y: auto; word-break: break-word; line-height: 1.5;">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideErrorModal()">Tutup</button>
+        <button class="btn btn-primary" id="error-modal-retry">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+          Coba Lagi (Retry)
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

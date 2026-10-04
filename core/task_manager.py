@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import uuid
@@ -26,47 +27,66 @@ class TaskManager:
         category: str = "General",
         format_id: str = "best",
         thumbnail: str = "",
-        filesize: int = 0
+        filesize: int = 0,
+        headers: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         task_id = str(uuid.uuid4())[:8]
 
-        # Extract info if not provided
-        if not title or not filename:
+        # Resolve URL if it's an embedding page (e.g. anichin, dailymotion embeds, etc.)
+        clean_url = url.split("?")[0].lower()
+        direct_exts = (".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".flv", ".ts", ".mp3", ".zip", ".rar", ".exe", ".iso")
+        if not clean_url.endswith(direct_exts) and not any(d in url.lower() for d in ["vod3.cf.dmcdn.net", "dmcdn.net"]):
             try:
-                info = StreamExtractor.get_video_info(url)
-                title = title or info.get("title", "Download")
-                filename = filename or info.get("filename", "video.mp4")
-                category = category if category != "General" else info.get("category", "General")
-                thumbnail = thumbnail or info.get("thumbnail", "")
-                filesize = filesize or info.get("filesize", 0)
+                embedded = StreamExtractor.resolve_embedded_video(url)
+                if embedded:
+                    url = embedded[0]
+                    if (not title or title == "Download") and embedded[1]:
+                        title = embedded[1]
             except Exception:
-                title = title or "Direct Download"
-                filename = filename or "file.bin"
+                pass
+
+        # Extract info to get accurate format details and filesizes
+        info = None
+        try:
+            info = StreamExtractor.get_video_info(url)
+        except Exception:
+            pass
+
+        if info:
+            url = info.get("url", url)
+            title = title or info.get("title", "Download")
+            category = category if category != "General" else info.get("category", "General")
+            thumbnail = thumbnail or info.get("thumbnail", "")
+
+            # Look up matching format
+            formats = info.get("formats", [])
+            matched_fmt = None
+            if format_id and format_id != "best":
+                matched_fmt = next((f for f in formats if f.get("format_id") == format_id), None)
+                if not matched_fmt:
+                    fid_base = format_id.split("+")[0].split("/")[0]
+                    matched_fmt = next((f for f in formats if f.get("format_id", "").startswith(fid_base)), None)
+
+            if matched_fmt:
+                # Format matched! Update filesize to specific format size
+                fmt_size = matched_fmt.get("filesize", 0)
+                if fmt_size > 0:
+                    filesize = fmt_size
+                res = matched_fmt.get("resolution", "")
+                ext = matched_fmt.get("ext", "mp4")
+                if not filename or filename in ["video.mp4", "file.bin"] or not re.search(r'\[?\b\d{3,4}p\b\]?', filename):
+                    filename = StreamExtractor.make_filename(title, res, ext)
+            else:
+                if not filesize:
+                    filesize = info.get("filesize", 0)
+                if not filename:
+                    filename = info.get("filename", "video.mp4")
+        else:
+            title = title or "Direct Download"
+            filename = filename or "file.bin"
 
         title = sanitize_filename(title)
         filename = sanitize_filename(filename)
-
-        task_data = {
-            "id": task_id,
-            "url": url,
-            "title": title,
-            "filename": filename,
-            "filepath": "",
-            "filesize": filesize,
-            "downloaded_bytes": 0,
-            "progress": 0.0,
-            "speed": 0.0,
-            "eta": 0,
-            "status": "downloading",
-            "category": category,
-            "thumbnail": thumbnail,
-            "format_id": format_id,
-            "error_message": "",
-            "created_at": time.time(),
-            "completed_at": None
-        }
-
-        self.db.add_download(task_data)
 
         # Create runner
         task = DownloadTask(
@@ -76,14 +96,35 @@ class TaskManager:
             filename=filename,
             category=category,
             format_id=format_id,
+            filesize=filesize,
+            headers=headers or {},
             on_progress=self._on_task_progress,
             on_complete=self._on_task_complete,
             on_error=self._on_task_error
         )
 
-        task_data["filepath"] = task.filepath
-        self.db.add_download(task_data)
+        task_data = {
+            "id": task_id,
+            "url": url,
+            "title": title,
+            "filename": filename,
+            "filepath": task.filepath,
+            "filesize": filesize,
+            "downloaded_bytes": 0,
+            "progress": 0.0,
+            "speed": 0.0,
+            "eta": 0,
+            "status": "downloading",
+            "category": category,
+            "thumbnail": thumbnail,
+            "format_id": format_id,
+            "headers": headers or {},
+            "error_message": "",
+            "created_at": time.time(),
+            "completed_at": None
+        }
 
+        self.db.add_download(task_data)
         self.active_tasks[task_id] = task
         task.start()
 
@@ -122,26 +163,49 @@ class TaskManager:
     def resume_task(self, task_id: str) -> bool:
         if task_id in self.active_tasks:
             self.active_tasks[task_id].resume()
-            self.db.update_status(task_id, "downloading")
+            self.db.update_status(task_id, "downloading", error_message="")
             return True
 
         # If not in memory, re-instantiate from database
         item = self.db.get_by_id(task_id)
-        if item and item["status"] in ["paused", "error"]:
+        if item and item["status"] in ["paused", "error", "pending"]:
+            url = item["url"]
+            headers_raw = item.get("headers", "")
+            headers_dict = {}
+            if headers_raw:
+                try:
+                    import json
+                    headers_dict = json.loads(headers_raw) if isinstance(headers_raw, str) else headers_raw
+                except Exception:
+                    pass
+
+            clean_url = url.split("?")[0].lower()
+            direct_exts = (".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".flv", ".ts", ".mp3", ".zip", ".rar", ".exe", ".iso")
+            if not clean_url.endswith(direct_exts) and not any(d in url.lower() for d in ["vod3.cf.dmcdn.net", "dmcdn.net"]):
+                try:
+                    embedded = StreamExtractor.resolve_embedded_video(url)
+                    if embedded:
+                        url = embedded[0]
+                        self.db.update_url(task_id, url)
+                except Exception:
+                    pass
+
             task = DownloadTask(
                 task_id=task_id,
-                url=item["url"],
+                url=url,
                 title=item["title"],
                 filename=item["filename"],
                 category=item["category"],
-                format_id=item["format_id"],
+                format_id=item.get("format_id") or "best",
+                filesize=item.get("filesize", 0),
                 filepath=item["filepath"],
+                headers=headers_dict,
                 on_progress=self._on_task_progress,
                 on_complete=self._on_task_complete,
                 on_error=self._on_task_error
             )
             self.active_tasks[task_id] = task
-            self.db.update_status(task_id, "downloading")
+            self.db.update_status(task_id, "downloading", error_message="")
             task.start()
             return True
         return False

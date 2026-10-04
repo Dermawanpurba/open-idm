@@ -17,6 +17,41 @@ window.toggleConnectionDetails = function(id, event) {
   renderDownloads();
 };
 
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+window.showErrorModal = function(id) {
+  const item = downloadsData.find(d => d.id === id);
+  if (!item) return;
+
+  const modal = document.getElementById("error-modal");
+  const titleEl = document.getElementById("error-modal-title");
+  const msgEl = document.getElementById("error-modal-msg");
+  const btnRetry = document.getElementById("error-modal-retry");
+
+  if (titleEl) titleEl.textContent = item.title || "Detail Kesalahan Unduhan";
+  if (msgEl) msgEl.textContent = item.error_message || "Terjadi kesalahan koneksi atau stream media tidak dapat diakses.";
+  if (btnRetry) {
+    btnRetry.onclick = () => {
+      hideErrorModal();
+      controlDownload(item.id, 'resume');
+    };
+  }
+  if (modal) modal.classList.remove("hidden");
+};
+
+window.hideErrorModal = function() {
+  const modal = document.getElementById("error-modal");
+  if (modal) modal.classList.add("hidden");
+};
+
 // DOM Elements
 const downloadsList = document.getElementById("downloads-list");
 const emptyState = document.getElementById("empty-state");
@@ -173,10 +208,10 @@ function renderDownloads() {
         </td>
         <td>
           ${isDownloading ? formatSpeed(item.speed) : "-"}
-          ${(isDownloading || isPaused) ? `
+          ${(isDownloading || isPaused || isError) ? `
             <div style="margin-top: 4px;">
               <button class="btn-toggle-connection" onclick="toggleConnectionDetails('${item.id}', event)" title="Lihat/Sembunyikan Pembagian Koneksi IDM">
-                ⚡ ${item.num_chunks || 8} Koneksi ${expandedTaskIds.has(item.id) ? '▲' : '▼'}
+                ${isError ? '⚠️ Info Kendala' : `⚡ ${item.num_chunks || 8} Koneksi`} ${expandedTaskIds.has(item.id) ? '▲' : '▼'}
               </button>
             </div>
           ` : ''}
@@ -217,97 +252,132 @@ function renderDownloads() {
 
     // Render Connection Inspector Row if expanded
     if (expandedTaskIds.has(item.id)) {
-      const chunks = item.chunks || [];
-      const numChunks = item.num_chunks || (chunks.length || 8);
-
-      let slotsHtml = "";
-      if (chunks.length > 0) {
-        chunks.forEach(c => {
-          slotsHtml += `
-            <div class="connection-segment-slot" title="Koneksi #${c.num}: ${c.percent}% (${formatBytes(c.downloaded)} / ${formatBytes(c.total)})">
-              <div class="connection-segment-fill" style="width: ${c.percent}%;"></div>
-            </div>
-          `;
-        });
+      if (isError) {
+        html += `
+          <tr class="connection-inspector-row">
+            <td colspan="6">
+              <div class="connection-card error-card">
+                <div class="connection-error-banner">
+                  <div class="connection-error-icon">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                  </div>
+                  <div class="connection-error-content">
+                    <div class="connection-error-title">Gagal Mengunduh Berkas</div>
+                    <div class="connection-error-message">${escapeHtml(item.error_message || "Koneksi ke server terputus atau waktu habis. Klik 'Coba Lagi' untuk menyambungkan kembali.")}</div>
+                  </div>
+                  <div class="connection-error-actions">
+                    <button class="btn btn-primary btn-sm" onclick="controlDownload('${item.id}', 'resume')" title="Coba unduh ulang sekarang">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                      Coba Lagi (Retry)
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="deleteDownload('${item.id}')" title="Hapus dari antrean">
+                      Hapus
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        `;
       } else {
-        for (let i = 0; i < numChunks; i++) {
-          slotsHtml += `
-            <div class="connection-segment-slot">
-              <div class="connection-segment-fill" style="width: ${progressPercent}%;"></div>
-            </div>
-          `;
-        }
-      }
+        const chunks = item.chunks || [];
+        const numChunks = item.num_chunks || (chunks.length || 8);
 
-      let tableRowsHtml = "";
-      if (chunks.length > 0) {
-        chunks.forEach(c => {
-          const isDone = c.status === "Selesai";
-          const dotColor = isDone ? "var(--color-primary)" : "var(--color-success)";
-          tableRowsHtml += `
+        let slotsHtml = "";
+        if (chunks.length > 0) {
+          chunks.forEach(c => {
+            slotsHtml += `
+              <div class="connection-segment-slot" title="Koneksi #${c.num}: ${c.percent}% (${formatBytes(c.downloaded)} / ${formatBytes(c.total)})">
+                <div class="connection-segment-fill" style="width: ${c.percent}%;"></div>
+              </div>
+            `;
+          });
+        } else {
+          for (let i = 0; i < numChunks; i++) {
+            slotsHtml += `
+              <div class="connection-segment-slot">
+                <div class="connection-segment-fill" style="width: ${progressPercent}%;"></div>
+              </div>
+            `;
+          }
+        }
+
+        let tableRowsHtml = "";
+        if (chunks.length > 0) {
+          chunks.forEach(c => {
+            const isDone = c.status === "Selesai";
+            const isActive = !isDone && c.status && c.status.includes("Menerima");
+            const dotColor = isDone ? "var(--color-primary)" : "var(--color-success)";
+            tableRowsHtml += `
+              <tr>
+                <td style="font-weight: 600; width: 45px; text-align: center;">${c.num}</td>
+                <td style="font-weight: 500;">${formatBytes(c.downloaded)}</td>
+                <td style="color: var(--color-text-muted);">${formatBytes(c.total)} (${c.percent}%)</td>
+                <td>
+                  <span class="connection-status-dot ${isActive ? 'active' : ''}" style="background: ${dotColor}; box-shadow: 0 0 6px ${dotColor};"></span>
+                  <span>${c.status}</span>
+                </td>
+              </tr>
+            `;
+          });
+        } else {
+          const loadingText = isDownloading ? "Sedang menghubungkan ke server & mengunduh stream..." : isPaused ? "Unduhan dijeda" : isCompleted ? "Unduhan selesai" : "Menunggu koneksi...";
+          tableRowsHtml = `
             <tr>
-              <td style="font-weight: 600; width: 45px; text-align: center;">${c.num}</td>
-              <td style="font-weight: 500;">${formatBytes(c.downloaded)}</td>
-              <td style="color: var(--color-text-muted);">${formatBytes(c.total)} (${c.percent}%)</td>
-              <td>
-                <span class="connection-status-dot" style="background: ${dotColor}; box-shadow: 0 0 6px ${dotColor};"></span>
-                <span>${c.status}</span>
+              <td colspan="4" style="text-align: center; color: var(--color-text-muted); padding: 10px;">
+                ${loadingText}
               </td>
             </tr>
           `;
-        });
-      } else {
-        tableRowsHtml = `
-          <tr>
-            <td colspan="4" style="text-align: center; color: var(--color-text-muted); padding: 10px;">
-              Sedang menghubungkan ke server media paralel...
+        }
+
+        html += `
+          <tr class="connection-inspector-row">
+            <td colspan="6">
+              <div class="connection-card">
+                <div class="connection-card-header">
+                  <div class="connection-badges">
+                    <span class="badge-connections">⚡ ${numChunks} Koneksi Multi-Segment IDM</span>
+                    <span class="badge-resume">Kemampuan resume: ${item.can_resume !== false ? 'Ya' : 'Tidak'}</span>
+                  </div>
+                  <div class="connection-meta-stats">
+                    <span>Tingkat transfer: <strong>${formatSpeed(item.speed)}</strong></span>
+                    <span>Waktu tersisa: <strong>${formatEta(item.eta)}</strong></span>
+                    <span>Diunduh: <strong>${formatBytes(item.downloaded_bytes)} (${progressPercent}%)</strong></span>
+                  </div>
+                </div>
+
+                <div class="connection-bar-wrapper">
+                  <div class="connection-bar-title">Progres posisi mulai dan unduh berdasarkan koneksi:</div>
+                  <div class="connection-segments-track">
+                    ${slotsHtml}
+                  </div>
+                </div>
+
+                <div class="connection-table-wrapper">
+                  <table class="connection-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 45px; text-align: center;">N.</th>
+                        <th style="width: 140px;">Diunduh</th>
+                        <th style="width: 160px;">Total Segmen</th>
+                        <th>Status Koneksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${tableRowsHtml}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </td>
           </tr>
         `;
       }
-
-      html += `
-        <tr class="connection-inspector-row">
-          <td colspan="6">
-            <div class="connection-card">
-              <div class="connection-card-header">
-                <div class="connection-badges">
-                  <span class="badge-connections">⚡ ${numChunks} Koneksi Multi-Segment IDM</span>
-                  <span class="badge-resume">Kemampuan resume: ${item.can_resume !== false ? 'Ya' : 'Tidak'}</span>
-                </div>
-                <div class="connection-meta-stats">
-                  <span>Tingkat transfer: <strong>${formatSpeed(item.speed)}</strong></span>
-                  <span>Waktu tersisa: <strong>${formatEta(item.eta)}</strong></span>
-                  <span>Diunduh: <strong>${formatBytes(item.downloaded_bytes)} (${progressPercent}%)</strong></span>
-                </div>
-              </div>
-
-              <div class="connection-bar-wrapper">
-                <div class="connection-bar-title">Progres posisi mulai dan unduh berdasarkan koneksi:</div>
-                <div class="connection-segments-track">
-                  ${slotsHtml}
-                </div>
-              </div>
-
-              <div class="connection-table-wrapper">
-                <table class="connection-table">
-                  <thead>
-                    <tr>
-                      <th style="width: 45px; text-align: center;">N.</th>
-                      <th style="width: 140px;">Diunduh</th>
-                      <th style="width: 160px;">Total Segmen</th>
-                      <th>Status Koneksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${tableRowsHtml}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </td>
-        </tr>
-      `;
     }
   });
 
@@ -410,12 +480,24 @@ btnEmptyAdd.addEventListener("click", showModal);
 btnCloseModal.addEventListener("click", hideModal);
 btnCancelModal.addEventListener("click", hideModal);
 
+// Auto-detect video stream domains on input paste/type
+inputUrl.addEventListener("input", () => {
+  const val = inputUrl.value.trim().toLowerCase();
+  if (val.includes("vod3.cf.dmcdn.net") || val.includes("dmcdn.net") || val.includes("dailymotion.com")) {
+    selectCategory.value = "Video";
+  }
+});
+
 // Fetch Video Info from URL
 btnFetchInfo.addEventListener("click", async () => {
   const url = inputUrl.value.trim();
   if (!url) {
     alert("Masukkan URL terlebih dahulu!");
     return;
+  }
+
+  if (url.toLowerCase().includes("vod3.cf.dmcdn.net") || url.toLowerCase().includes("dmcdn.net")) {
+    selectCategory.value = "Video";
   }
 
   btnFetchInfo.disabled = true;
@@ -449,14 +531,18 @@ btnFetchInfo.addEventListener("click", async () => {
     selectFormat.innerHTML = "";
     const formats = selectedVideoInfo.formats || [];
     if (formats.length > 0) {
-      formats.forEach(f => {
+      formats.forEach((f, idx) => {
         const opt = document.createElement("option");
         opt.value = f.format_id;
         opt.textContent = `${f.quality} - ${f.filesize_formatted || "Adaptive"}`;
         selectFormat.appendChild(opt);
       });
+      // Update preview to top format initially
+      const topFmt = formats[0];
+      const durText = selectedVideoInfo.duration_formatted ? `Durasi: ${selectedVideoInfo.duration_formatted} • ` : "";
+      previewDuration.textContent = `${durText}Ukuran: ${topFmt.filesize_formatted || "Adaptive"} (${topFmt.resolution})`;
     } else {
-      selectFormat.innerHTML = `<option value="best">Kualitas Terbaik (${selectedVideoInfo.filesize_formatted})</option>`;
+      selectFormat.innerHTML = `<option value="best">Kualitas Terbaik (${selectedVideoInfo.filesize_formatted || "Otomatis"})</option>`;
     }
 
     if (selectedVideoInfo.category) {
@@ -471,6 +557,18 @@ btnFetchInfo.addEventListener("click", async () => {
   }
 });
 
+// Dynamic format selection preview update
+selectFormat.addEventListener("change", () => {
+  if (!selectedVideoInfo || !selectedVideoInfo.formats || selectedVideoInfo.formats.length === 0) return;
+  const currentFormatId = selectFormat.value;
+  const matched = selectedVideoInfo.formats.find(f => f.format_id === currentFormatId);
+  if (matched) {
+    const sizeText = matched.filesize_formatted || (matched.filesize > 0 ? formatBytes(matched.filesize) : "Adaptive");
+    const durText = selectedVideoInfo.duration_formatted ? `Durasi: ${selectedVideoInfo.duration_formatted} • ` : "";
+    previewDuration.textContent = `${durText}Ukuran: ${sizeText} (${matched.resolution || matched.quality})`;
+  }
+});
+
 // Start Download from Modal
 btnStartDownload.addEventListener("click", async () => {
   const url = inputUrl.value.trim();
@@ -481,14 +579,39 @@ btnStartDownload.addEventListener("click", async () => {
 
   const format_id = selectFormat.value;
   const category = selectCategory.value;
+
+  let targetFilesize = 0;
+  let targetFilename = selectedVideoInfo ? selectedVideoInfo.filename : null;
+  let targetResolution = "";
+
+  if (selectedVideoInfo && selectedVideoInfo.formats && selectedVideoInfo.formats.length > 0) {
+    const matched = selectedVideoInfo.formats.find(f => f.format_id === format_id);
+    if (matched) {
+      targetFilesize = matched.filesize || 0;
+      targetResolution = matched.resolution || "";
+      const ext = matched.ext || "mp4";
+      if (selectedVideoInfo.title) {
+        let cleanTitle = selectedVideoInfo.title.replace(/\[?\b(2160p|1440p|1080p|720p|480p|360p|240p|144p)\b\]?/gi, "").trim();
+        cleanTitle = cleanTitle.replace(/\s+/g, " ").replace(/[\\/*?:"<>|]/g, "").trim();
+        if (targetResolution && targetResolution !== "Default" && targetResolution !== "Original" && targetResolution !== "Audio") {
+          targetFilename = `${cleanTitle} [${targetResolution}].${ext}`;
+        } else {
+          targetFilename = `${cleanTitle}.${ext}`;
+        }
+      }
+    } else {
+      targetFilesize = selectedVideoInfo.filesize || 0;
+    }
+  }
+
   const payload = {
-    url,
+    url: (selectedVideoInfo && selectedVideoInfo.url) || url,
     category,
     format_id,
     title: selectedVideoInfo ? selectedVideoInfo.title : null,
-    filename: selectedVideoInfo ? selectedVideoInfo.filename : null,
+    filename: targetFilename,
     thumbnail: selectedVideoInfo ? selectedVideoInfo.thumbnail : "",
-    filesize: selectedVideoInfo ? selectedVideoInfo.filesize : 0
+    filesize: targetFilesize
   };
 
   btnStartDownload.disabled = true;

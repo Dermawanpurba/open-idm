@@ -28,11 +28,20 @@ def init_db() -> None:
                 category TEXT DEFAULT 'General', -- Video, Music, Documents, Programs, Compressed, General
                 thumbnail TEXT DEFAULT '',
                 format_id TEXT DEFAULT '',
+                headers TEXT DEFAULT '',
                 error_message TEXT DEFAULT '',
                 created_at REAL NOT NULL,
                 completed_at REAL DEFAULT NULL
             )
         """)
+        # Auto-migration for existing tables
+        cursor = conn.execute("PRAGMA table_info(downloads)")
+        columns = [row["name"] for row in cursor.fetchall()]
+        if "headers" not in columns:
+            conn.execute("ALTER TABLE downloads ADD COLUMN headers TEXT DEFAULT ''")
+        if "format_id" not in columns:
+            conn.execute("ALTER TABLE downloads ADD COLUMN format_id TEXT DEFAULT ''")
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_downloads_category ON downloads(category)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at DESC)")
@@ -42,16 +51,21 @@ class DatabaseManager:
         init_db()
 
     def add_download(self, item: Dict[str, Any]) -> None:
+        import json
+        headers_val = item.get("headers", "")
+        if isinstance(headers_val, dict):
+            headers_val = json.dumps(headers_val)
+
         with get_connection() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO downloads (
                     id, url, title, filename, filepath, filesize, downloaded_bytes,
                     progress, speed, eta, status, category, thumbnail, format_id,
-                    error_message, created_at, completed_at
+                    headers, error_message, created_at, completed_at
                 ) VALUES (
                     :id, :url, :title, :filename, :filepath, :filesize, :downloaded_bytes,
                     :progress, :speed, :eta, :status, :category, :thumbnail, :format_id,
-                    :error_message, :created_at, :completed_at
+                    :headers, :error_message, :created_at, :completed_at
                 )
             """, {
                 "id": item["id"],
@@ -68,6 +82,7 @@ class DatabaseManager:
                 "category": item.get("category", "General"),
                 "thumbnail": item.get("thumbnail", ""),
                 "format_id": item.get("format_id", ""),
+                "headers": headers_val or "",
                 "error_message": item.get("error_message", ""),
                 "created_at": item.get("created_at", time.time()),
                 "completed_at": item.get("completed_at", None)
@@ -96,6 +111,10 @@ class DatabaseManager:
                 SET filepath = ?, filename = ?, filesize = ?
                 WHERE id = ?
             """, (filepath, filename, filesize, download_id))
+
+    def update_url(self, download_id: str, url: str) -> None:
+        with get_connection() as conn:
+            conn.execute("UPDATE downloads SET url = ? WHERE id = ?", (url, download_id))
 
     def get_all(self, category: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
         query = "SELECT * FROM downloads WHERE 1=1"

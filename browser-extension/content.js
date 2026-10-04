@@ -108,7 +108,18 @@
     isFetchingFormats = true;
     container.innerHTML = `<div class="openidm-loading-item">Menganalisis stream video...</div>`;
 
-    const currentUrl = window.location.href;
+    let currentUrl = window.location.href;
+    if (videoEl && videoEl.tagName === "IFRAME") {
+      const iframeSrc = videoEl.getAttribute("data-litespeed-src") || 
+                        videoEl.getAttribute("src") || 
+                        videoEl.getAttribute("data-src") || "";
+      const dmMatch = iframeSrc.match(/(?:dailymotion\.com\/(?:embed\/)?video\/|geo\.dailymotion\.com\/player\/[^\s\"\'<>]+\?video=)([a-zA-Z0-9]+)/i);
+      if (dmMatch) {
+        currentUrl = `https://www.dailymotion.com/video/${dmMatch[1]}`;
+      } else if (iframeSrc.startsWith("http")) {
+        currentUrl = iframeSrc;
+      }
+    }
 
     try {
       // 1. Try query OpenIDM Core for rich formats
@@ -129,21 +140,43 @@
       // OpenIDM Core offline or error, continue to fallback
     }
 
-    // 2. Fallback: Extract from <video> src or sniffed media
-    const videoSrc = videoEl.currentSrc || videoEl.src;
-    const pageTitle = document.title.replace(" - YouTube", "").trim() || "Video Download";
+    // 2. Fallback: Extract from sniffed media (e.g. vod3.cf.dmcdn.net) or <video> src
+    let candidateUrl = (videoEl && videoEl.currentSrc) || (videoEl && videoEl.src) || currentUrl;
+    let detectedStream = null;
 
-    if (videoSrc) {
+    // Check sniffed media from background worker
+    try {
+      const bgRes = await new Promise(resolve => {
+        chrome.runtime.sendMessage({ action: "GET_TAB_MEDIA" }, resolve);
+      });
+      if (bgRes && bgRes.media && bgRes.media.length > 0) {
+        // Find most relevant media (prefer vod3.cf.dmcdn.net or dmcdn or m3u8 or mp4)
+        detectedStream = bgRes.media.slice().reverse().find(m => 
+          m.url.includes("vod3.cf.dmcdn.net") || m.url.includes("dmcdn.net") || m.url.includes(".m3u8") || m.url.includes(".mp4")
+        ) || bgRes.media[bgRes.media.length - 1];
+      }
+    } catch (e) {
+      // background communication issue
+    }
+
+    if (detectedStream && (!candidateUrl || candidateUrl.startsWith("blob:"))) {
+      candidateUrl = detectedStream.url;
+    }
+
+    const pageTitle = document.title.replace(" - YouTube", "").replace(" - Dailymotion", "").trim() || "Video Download";
+
+    if (candidateUrl && !candidateUrl.startsWith("blob:")) {
+      const isDm = candidateUrl.includes("vod3.cf.dmcdn.net") || candidateUrl.includes("dmcdn.net");
       const fallbackInfo = {
         title: pageTitle,
-        url: videoSrc,
+        url: candidateUrl,
         formats: [
           {
             format_id: "best",
-            quality: "Video Asli (Direct Stream)",
+            quality: isDm ? "Dailymotion Stream (DMCDN)" : "Video Asli (Direct Stream)",
             resolution: "Original",
             ext: "mp4",
-            filesize: 0,
+            filesize: detectedStream ? detectedStream.filesize : 0,
             has_video: true,
             has_audio: true
           }
@@ -193,7 +226,7 @@
 
       item.addEventListener("click", (e) => {
         e.stopPropagation();
-        triggerDownload(info.url || window.location.href, info.title, f.format_id, f.category || "Video");
+        triggerDownload(info.url || window.location.href, info.title, f.format_id, f.category || "Video", f.filesize, f.resolution, f.ext);
         const dropdown = container.closest(".openidm-dropdown");
         if (dropdown) dropdown.classList.remove("open");
       });
@@ -203,8 +236,15 @@
   }
 
   // Send download request to OpenIDM Core
-  async function triggerDownload(url, title, format_id, category) {
+  async function triggerDownload(url, title, format_id, category, filesize = 0, resolution = "", ext = "mp4") {
     showToast("Mengirim unduhan ke OpenIDM Desktop...", "info");
+
+    let cleanTitle = (title || "video").replace(/\[?\b(2160p|1440p|1080p|720p|480p|360p|240p|144p)\b\]?/gi, "").trim();
+    cleanTitle = cleanTitle.replace(/\s+/g, " ").replace(/[\\/*?:"<>|]/g, "").trim();
+    const finalExt = (ext || "mp4").replace(/^\./, "");
+    const filename = resolution && resolution !== "Default" && resolution !== "Original" && resolution !== "Audio"
+      ? `${cleanTitle} [${resolution}].${finalExt}`
+      : `${cleanTitle}.${finalExt}`;
 
     try {
       const res = await fetch(`${OPENIDM_API}/download`, {
@@ -213,8 +253,11 @@
         body: JSON.stringify({
           url: url,
           title: title,
+          filename: filename,
           format_id: format_id,
-          category: category || "Video"
+          filesize: filesize || 0,
+          category: category || "Video",
+          headers: { "Referer": window.location.href }
         })
       });
 
@@ -248,6 +291,26 @@
       if (rect.width >= 240 && rect.height >= 140) {
         const parent = video.parentElement || video;
         attachDownloadButton(parent, video);
+      }
+    });
+
+    // 3. Embedded Video Iframes (Dailymotion, ok.ru, YouTube embeds on streaming portals like Anichin)
+    const iframes = document.querySelectorAll("iframe");
+    iframes.forEach(iframe => {
+      const src = (
+        iframe.getAttribute("src") || 
+        iframe.getAttribute("data-litespeed-src") || 
+        iframe.getAttribute("data-src") || 
+        ""
+      ).toLowerCase();
+
+      const isVideoIframe = [
+        "dailymotion.com", "dmcdn.net", "youtube.com", "youtu.be", "ok.ru", "odnoklassniki.ru", "vimeo.com"
+      ].some(k => src.includes(k));
+
+      if (isVideoIframe) {
+        const parent = iframe.closest(".player-embed, .video-content, .player-area, .video-container, .embed-responsive") || iframe.parentElement || iframe;
+        attachDownloadButton(parent, iframe);
       }
     });
   }

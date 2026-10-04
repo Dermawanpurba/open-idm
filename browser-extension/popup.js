@@ -32,6 +32,44 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const media = response && response.media ? response.media : [];
 
     if (media.length === 0) {
+      const tabUrl = currentTab.url || "";
+      if (tabUrl.includes("anichin.") || tabUrl.includes("dailymotion.") || tabUrl.includes("youtube.") || tabUrl.includes("youtu.be")) {
+        mediaList.innerHTML = `
+          <div class="media-card">
+            <div class="media-card-top">
+              <span class="media-badge">STREAMING PAGE</span>
+              <span class="media-size">Deteksi Otomatis</span>
+            </div>
+            <div class="media-url" title="${tabUrl}">${tabUrl}</div>
+            <button class="btn-download-sm" id="btn-dl-tab">Analisis & Unduh Video Halaman Ini</button>
+          </div>
+        `;
+        document.getElementById("btn-dl-tab").addEventListener("click", () => {
+          const btn = document.getElementById("btn-dl-tab");
+          btn.textContent = "Menganalisis & Mengirim...";
+          btn.disabled = true;
+          chrome.runtime.sendMessage({
+            action: "DOWNLOAD_VIDEO",
+            payload: {
+              url: tabUrl,
+              category: "Video",
+              format_id: "best",
+              title: currentTab.title || "Video Download",
+              headers: { "Referer": tabUrl }
+            }
+          }, (res) => {
+            if (res && res.success) {
+              btn.textContent = "✓ Terkirim ke OpenIDM!";
+              btn.style.background = "#2563EB";
+            } else {
+              btn.textContent = "Gagal kirim";
+              btn.style.background = "#EF4444";
+            }
+          });
+        });
+        return;
+      }
+
       mediaList.innerHTML = `<div class="empty-state">Tidak ada media streaming yang terdeteksi di tab ini. Coba putar video di halaman web.</div>`;
       return;
     }
@@ -41,7 +79,18 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const card = document.createElement("div");
       card.className = "media-card";
 
-      const ext = item.url.split("?")[0].split(".").pop().toUpperCase() || "MEDIA";
+      let ext = "VIDEO";
+      const cleanPath = item.url.split("?")[0].split("#")[0];
+      const match = cleanPath.match(/\.([a-zA-Z0-9]{2,5})$/);
+      if (match) {
+        ext = match[1].toUpperCase();
+      } else if (item.url.includes("vod3.cf.dmcdn.net") || item.url.includes("dmcdn.net") || item.url.includes("dailymotion.com")) {
+        ext = "VIDEO (DM)";
+      } else if (item.mediaType === "audio") {
+        ext = "AUDIO";
+      } else {
+        ext = "VIDEO";
+      }
       const sizeStr = formatBytes(item.filesize);
 
       card.innerHTML = `
@@ -58,13 +107,18 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         btn.textContent = "Mengirim...";
         btn.disabled = true;
 
-        // If on YouTube or social platforms, use the main page URL so yt-dlp fetches full video+audio tracks
+        // If on YouTube, Dailymotion or social platforms, use the main page URL so yt-dlp fetches full video+audio tracks
         const tabUrl = currentTab.url || "";
         const isPlatform = [
-          "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "twitter.com", "x.com"
+          "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "twitter.com", "x.com", "dailymotion.com"
         ].some(p => tabUrl.toLowerCase().includes(p));
 
-        const targetUrl = (isPlatform && tabUrl.startsWith("http")) ? tabUrl : item.url;
+        const isDmCdn = item.url.includes("vod3.cf.dmcdn.net") || item.url.includes("dmcdn.net");
+        // Prioritize canonical Dailymotion URL if item is already resolved, otherwise use tabUrl for platform
+        let targetUrl = item.url;
+        if (isPlatform && !isDmCdn && tabUrl.startsWith("http") && !item.url.includes("dailymotion.com/video/")) {
+          targetUrl = tabUrl;
+        }
 
         chrome.runtime.sendMessage({
           action: "DOWNLOAD_VIDEO",
@@ -72,7 +126,9 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             url: targetUrl,
             category: "Video",
             format_id: "best",
-            title: currentTab.title || "Video Download"
+            filesize: item.filesize || 0,
+            title: currentTab.title || "Video Download",
+            headers: item.headers || { "Referer": currentTab.url || "" }
           }
         }, (res) => {
           if (res && res.success) {

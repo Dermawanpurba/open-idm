@@ -12,7 +12,7 @@ task_manager = TaskManager()
 UI_DIR = BASE_DIR / "ui"
 
 class OpenIDMRequestHandler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, directory=None, **kwargs):
         super().__init__(*args, directory=str(UI_DIR), **kwargs)
 
     def _set_cors_headers(self, status: int = 200, content_type: str = "application/json"):
@@ -83,77 +83,86 @@ class OpenIDMRequestHandler(SimpleHTTPRequestHandler):
         path = parsed.path
         body = self._read_json_body()
 
-        if path == "/api/info":
-            url = body.get("url", "").strip()
-            if not url:
-                self._send_json({"error": "URL diperlukan"}, status=400)
-                return
-            try:
+        try:
+            if path == "/api/info":
+                url = body.get("url", "").strip()
+                if not url:
+                    self._send_json({"error": "URL diperlukan"}, status=400)
+                    return
                 info = task_manager.get_video_info(url)
                 self._send_json({"success": True, "info": info})
-            except Exception as e:
-                self._send_json({"error": str(e)}, status=500)
-            return
-
-        if path == "/api/download":
-            url = body.get("url", "").strip()
-            if not url:
-                self._send_json({"error": "URL diperlukan"}, status=400)
                 return
 
-            task = task_manager.create_download(
-                url=url,
-                title=body.get("title"),
-                filename=body.get("filename"),
-                category=body.get("category", "General"),
-                format_id=body.get("format_id", "best"),
-                thumbnail=body.get("thumbnail", ""),
-                filesize=body.get("filesize", 0)
-            )
-            self._send_json({"success": True, "task": task})
-            return
+            if path == "/api/download":
+                url = body.get("url", "").strip()
+                if not url:
+                    self._send_json({"error": "URL diperlukan"}, status=400)
+                    return
 
-        if path == "/api/control":
-            task_id = body.get("id")
-            action = body.get("action")
-            delete_file = body.get("delete_file", False)
-
-            if not task_id or not action:
-                self._send_json({"error": "ID dan action diperlukan"}, status=400)
+                task = task_manager.create_download(
+                    url=url,
+                    title=body.get("title"),
+                    filename=body.get("filename"),
+                    category=body.get("category", "General"),
+                    format_id=body.get("format_id", "best"),
+                    thumbnail=body.get("thumbnail", ""),
+                    filesize=body.get("filesize", 0),
+                    headers=body.get("headers", {})
+                )
+                self._send_json({"success": True, "task": task})
                 return
 
-            success = False
-            if action == "pause":
-                success = task_manager.pause_task(task_id)
-            elif action == "resume":
-                success = task_manager.resume_task(task_id)
-            elif action == "cancel":
-                success = task_manager.cancel_task(task_id)
-            elif action == "delete":
-                success = task_manager.delete_task(task_id, delete_file=delete_file)
+            if path == "/api/control":
+                task_id = body.get("id")
+                action = body.get("action")
+                delete_file = body.get("delete_file", False)
 
-            self._send_json({"success": success})
-            return
+                if not task_id or not action:
+                    self._send_json({"error": "ID dan action diperlukan"}, status=400)
+                    return
 
-        if path == "/api/open-file":
-            task_id = body.get("id")
-            success = task_manager.open_file(task_id)
-            self._send_json({"success": success})
-            return
+                success = False
+                if action == "pause":
+                    success = task_manager.pause_task(task_id)
+                elif action == "resume":
+                    success = task_manager.resume_task(task_id)
+                elif action == "cancel":
+                    success = task_manager.cancel_task(task_id)
+                elif action == "delete":
+                    success = task_manager.delete_task(task_id, delete_file=delete_file)
 
-        if path == "/api/open-folder":
-            task_id = body.get("id")
-            success = task_manager.open_folder(task_id)
-            self._send_json({"success": success})
-            return
+                self._send_json({"success": success})
+                return
 
-        self._send_json({"error": "Endpoint not found"}, status=404)
+            if path == "/api/open-file":
+                task_id = body.get("id")
+                success = task_manager.open_file(task_id)
+                self._send_json({"success": success})
+                return
+
+            if path == "/api/open-folder":
+                task_id = body.get("id")
+                success = task_manager.open_folder(task_id)
+                self._send_json({"success": success})
+                return
+
+            self._send_json({"error": "Endpoint not found"}, status=404)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"success": False, "error": str(e)}, status=500)
 
 def run_server(host: str = SERVER_HOST, port: int = SERVER_PORT):
+    ThreadingHTTPServer.allow_reuse_address = True
     server = ThreadingHTTPServer((host, port), OpenIDMRequestHandler)
     print(f"[OpenIDM Core] Server aktif di http://{host}:{port}")
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         print("\n[OpenIDM Core] Server dihentikan.")
+    except Exception as e:
+        import traceback
+        print(f"\n[OpenIDM Core] ERROR: {e}")
+        traceback.print_exc()
+    finally:
         server.server_close()

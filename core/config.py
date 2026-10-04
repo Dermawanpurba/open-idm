@@ -44,6 +44,13 @@ def get_node_path() -> Optional[str]:
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 6899
 
+# Video Hosts & Streaming CDNs
+KNOWN_VIDEO_DOMAINS = [
+    "vod3.cf.dmcdn.net",
+    "dmcdn.net",
+    "dailymotion.com"
+]
+
 # Download Engine Settings
 DEFAULT_CHUNKS = 8  # Number of parallel connections for direct downloads
 MAX_CONCURRENT_DOWNLOADS = 3
