@@ -128,8 +128,25 @@ class DownloadTask:
                     except Exception:
                         pass
 
+            # Check if URL is Google Drive
+            from .gdrive_handler import GoogleDriveHandler
+            if GoogleDriveHandler.is_gdrive_url(self.url) and "drive.usercontent.google.com" not in self.url:
+                file_match = GoogleDriveHandler.FILE_REGEX.search(self.url)
+                if file_match:
+                    try:
+                        f_info = GoogleDriveHandler.get_file_info(file_match.group(1), self.url)
+                        self.url = f_info["url"]
+                        if not self.filesize:
+                            self.filesize = f_info["filesize"]
+                        if not self.filename or self.filename in ["file.bin", "download_file"]:
+                            self.filename = f_info["filename"]
+                        from .database import DatabaseManager
+                        DatabaseManager().update_url(self.task_id, self.url)
+                    except Exception:
+                        pass
+
             # Check if URL is an HTML page embedding a video (e.g. Anichin embedding Dailymotion)
-            if not self.url.lower().endswith((".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".flv", ".ts")):
+            if not self.url.lower().endswith((".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".flv", ".ts")) and not any(d in self.url.lower() for d in ["drive.google.com", "drive.usercontent.google.com"]):
                 from .stream_extractor import StreamExtractor
                 embedded = StreamExtractor.resolve_embedded_video(self.url)
                 if embedded:
@@ -474,8 +491,15 @@ class DownloadTask:
                     headers[k] = v
 
         res = requests.head(self.url, headers=headers, allow_redirects=True, timeout=20)
+        if res.status_code >= 400:
+            res = requests.get(self.url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=20)
+        self.url = res.url
         self.filesize = int(res.headers.get("Content-Length", 0))
-        accept_ranges = "bytes" in res.headers.get("Accept-Ranges", "").lower()
+        if "content-range" in res.headers and not self.filesize:
+            range_match = re.search(r"/(\d+)", res.headers["content-range"])
+            if range_match:
+                self.filesize = int(range_match.group(1))
+        accept_ranges = "bytes" in res.headers.get("Accept-Ranges", "").lower() or "content-range" in res.headers
 
         # If server does not support Range requests or filesize is small (< 2MB), download single stream
         if not accept_ranges or self.filesize < 2 * 1024 * 1024:

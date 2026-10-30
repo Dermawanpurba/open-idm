@@ -124,6 +124,13 @@
 }
 
 .openidm-dropdown-item {
+  width: 100% !important;
+  background: transparent !important;
+  color: #F8FAFC !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  text-align: left !important;
+  font: inherit !important;
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
@@ -132,6 +139,12 @@
   cursor: pointer !important;
   transition: background 0.15s ease !important;
 }
+
+.openidm-dropdown-item:disabled { opacity: .6 !important; cursor: wait !important; }
+.openidm-floating-panel button:focus-visible, #openidm-gdrive-btn:focus-visible { outline: 2px solid #93c5fd !important; outline-offset: 3px !important; }
+.openidm-dropdown-list { padding: 8px !important; }
+#openidm-gdrive-btn { position: fixed !important; inset: auto 24px 24px auto !important; z-index: 2147483647 !important; }
+@media (prefers-reduced-motion: reduce) { .openidm-floating-panel *, .openidm-toast { transition: none !important; } }
 
 .openidm-dropdown-item:last-child {
   border-bottom: none !important;
@@ -220,13 +233,13 @@
 }
 
 .openidm-toast-success {
-  border-left: 4px solid #10B981 !important;
+  border-color: #10B981 !important;
 }
 
 .openidm-toast-info {
-  border-left: 4px solid #3B82F6 !important;
+  border-color: #3B82F6 !important;
 }
 
 .openidm-toast-error {
-  border-left: 4px solid #EF4444 !important;
+  border-color: #EF4444 !important;
 }

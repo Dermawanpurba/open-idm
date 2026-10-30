@@ -162,6 +162,9 @@ class StreamExtractor:
 
     @classmethod
     def resolve_embedded_video(cls, url: str) -> Optional[Tuple[str, Optional[str]]]:
+        if any(d in url.lower() for d in ["drive.google.com", "drive.usercontent.google.com", "docs.google.com"]):
+            return None
+
         # 1. Direct Dailymotion URL or geo player URL
         dm_url_match = re.search(r'(?:dailymotion\.com/(?:embed/)?video/|geo\.dailymotion\.com/player/[^?\"\']+\?video=)([a-zA-Z0-9]+)', url, re.I)
         if dm_url_match:
@@ -319,6 +322,11 @@ class StreamExtractor:
 
     @classmethod
     def get_video_info(cls, url: str) -> Dict[str, Any]:
+        # Check Google Drive link (Folder or File)
+        from .gdrive_handler import GoogleDriveHandler
+        if GoogleDriveHandler.is_gdrive_url(url):
+            return GoogleDriveHandler.get_info(url)
+
         # If it's a direct file URL, try head first
         if cls.is_direct_file(url):
             direct_info = cls.get_direct_file_info(url)

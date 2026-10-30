@@ -1,349 +1,194 @@
-// OpenIDM Content Script - Floating "Download this video" Panel
-
-(function() {
+/* Page UI delegates every network request to the extension worker. */
+(function () {
   "use strict";
-
-  const OPENIDM_API = "http://127.0.0.1:6899/api";
-  let activePanel = null;
-  let cachedVideoInfo = null;
-  let isFetchingFormats = false;
-
-  // Format Bytes Helper
-  function formatBytes(bytes) {
-    if (!bytes || bytes <= 0) return "";
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return ` (~${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]})`;
-  }
-
-  // Toast Notification
-  function showToast(message, type = "success") {
-    let toast = document.getElementById("openidm-toast");
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.id = "openidm-toast";
-      document.body.appendChild(toast);
-    }
-    toast.className = `openidm-toast openidm-toast-${type} show`;
-    toast.textContent = message;
-
-    setTimeout(() => {
-      toast.classList.remove("show");
-    }, 3500);
-  }
-
-  // Create or attach floating button to player container
-  function attachDownloadButton(targetContainer, videoEl) {
-    if (targetContainer.querySelector(".openidm-floating-panel")) {
-      return;
-    }
-
-    const panel = document.createElement("div");
-    panel.className = "openidm-floating-panel";
-    panel.innerHTML = `
-      <div class="openidm-btn-pill" id="openidm-trigger-btn" title="Download this video with OpenIDM">
-        <svg class="openidm-play-icon" viewBox="0 0 24 24" fill="currentColor">
-          <polygon points="5 3 19 12 5 21 5 3"></polygon>
-        </svg>
-        <span class="openidm-btn-text">Download this video</span>
-        <svg class="openidm-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="6 9 12 15 18 9"></polyline>
-        </svg>
-      </div>
-      <button class="openidm-close-btn" title="Sembunyikan">✕</button>
-
-      <div class="openidm-dropdown" id="openidm-dropdown">
-        <div class="openidm-dropdown-header">Pilih Kualitas Video:</div>
-        <div class="openidm-dropdown-list" id="openidm-formats-list">
-          <div class="openidm-loading-item">Memuat resolusi...</div>
-        </div>
-      </div>
-    `;
-
-    // Ensure relative positioning on parent
-    const style = window.getComputedStyle(targetContainer);
-    if (style.position === "static") {
-      targetContainer.style.position = "relative";
-    }
-
-    targetContainer.appendChild(panel);
-    activePanel = panel;
-
-    const triggerBtn = panel.querySelector("#openidm-trigger-btn");
-    const closeBtn = panel.querySelector(".openidm-close-btn");
-    const dropdown = panel.querySelector("#openidm-dropdown");
-    const formatsList = panel.querySelector("#openidm-formats-list");
-
-    // Close button handler
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      panel.style.display = "none";
-    });
-
-    // Toggle dropdown
-    triggerBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const isOpen = dropdown.classList.toggle("open");
-      if (isOpen) {
-        await loadVideoFormats(formatsList, videoEl);
-      }
-    });
-
-    // Close on click outside
-    document.addEventListener("click", (e) => {
-      if (!panel.contains(e.target)) {
-        dropdown.classList.remove("open");
-      }
-    });
-  }
-
-  // Load formats from OpenIDM Core or fallback to direct video stream
-  async function loadVideoFormats(container, videoEl) {
-    if (cachedVideoInfo && cachedVideoInfo.formats && cachedVideoInfo.formats.length > 0) {
-      renderFormats(container, cachedVideoInfo);
-      return;
-    }
-
-    if (isFetchingFormats) return;
-    isFetchingFormats = true;
-    container.innerHTML = `<div class="openidm-loading-item">Menganalisis stream video...</div>`;
-
-    let currentUrl = window.location.href;
-    if (videoEl && videoEl.tagName === "IFRAME") {
-      const iframeSrc = videoEl.getAttribute("data-litespeed-src") || 
-                        videoEl.getAttribute("src") || 
-                        videoEl.getAttribute("data-src") || "";
-      const dmMatch = iframeSrc.match(/(?:dailymotion\.com\/(?:embed\/)?video\/|geo\.dailymotion\.com\/player\/[^\s\"\'<>]+\?video=)([a-zA-Z0-9]+)/i);
-      if (dmMatch) {
-        currentUrl = `https://www.dailymotion.com/video/${dmMatch[1]}`;
-      } else if (iframeSrc.startsWith("http")) {
-        currentUrl = iframeSrc;
-      }
-    }
-
-    try {
-      // 1. Try query OpenIDM Core for rich formats
-      const res = await fetch(`${OPENIDM_API}/info`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: currentUrl })
+  if (!document.body || location.origin === "http://127.0.0.1:6899") return;
+  const cache = new Map();
+  let lastUrl = location.href;
+  function send(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(message, response => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error("Ekstensi diperbarui. Muat ulang halaman ini."));
+        else if (!response || response.error || response.success === false) reject(new Error(response?.error || "Ekstensi tidak merespons."));
+        else resolve(response);
       });
-      const data = await res.json();
-
-      if (data.success && data.info) {
-        cachedVideoInfo = data.info;
-        renderFormats(container, cachedVideoInfo);
-        isFetchingFormats = false;
+    });
+  }
+  function toast(message, type = "success") {
+    let element = document.getElementById("openidm-toast");
+    if (!element) {
+      element = document.createElement("div");
+      element.id = "openidm-toast";
+      element.setAttribute("role", "status");
+      document.body.append(element);
+    }
+    element.className = `openidm-toast openidm-toast-${type} show`;
+    element.textContent = message;
+    clearTimeout(element.hideTimer);
+    element.hideTimer = setTimeout(() => element.classList.remove("show"), 5000);
+  }
+  function bytes(value) {
+    if (!(value > 0)) return "";
+    const i = Math.min(4, Math.floor(Math.log(value) / Math.log(1024)));
+    return `${(value / 1024 ** i).toFixed(1)} ${["B", "KB", "MB", "GB", "TB"][i]}`;
+  }
+  function playerUrl(player) {
+    if (player.tagName === "IFRAME") {
+      const src = player.getAttribute("data-litespeed-src") || player.getAttribute("src") || player.getAttribute("data-src") || "";
+      const dm = src.match(/(?:dailymotion\.com\/(?:embed\/)?video\/|geo\.dailymotion\.com\/player\/[^\s"'<>]+\?video=)([a-zA-Z0-9]+)/i);
+      if (dm) return `https://www.dailymotion.com/video/${dm[1]}`;
+      try { return new URL(src, location.href).href; } catch { return location.href; }
+    }
+    return location.href;
+  }
+  async function loadFormats(container, player) {
+    const url = playerUrl(player);
+    const source = player.currentSrc || player.src || "";
+    const cacheKey = `${url}|${source}`;
+    container.textContent = "Menganalisis video di OpenIDM Desktop…";
+    try {
+      let info = cache.get(cacheKey);
+      if (!info) {
+        const response = await send({ action: "FETCH_INFO", url });
+        info = response.info;
+        if (info?.formats?.length) {
+          if (cache.size >= 20) cache.delete(cache.keys().next().value);
+          cache.set(cacheKey, info);
+        }
+      }
+      if (playerUrl(player) !== url || (player.currentSrc || player.src || "") !== source) return;
+      if (info?.formats?.length) { render(container, info); return; }
+    } catch { /* Direct files can still be downloaded without the companion. */ }
+    try {
+      const { media } = await send({ action: "GET_TAB_MEDIA" });
+      // Never use another player's stream as an implicit fallback.
+      const direct = /^https?:\/\//i.test(source) && player.tagName !== "IFRAME" ? source : null;
+      const candidates = media.filter(item => item.mediaType !== "audio");
+      const candidate = direct ? { url: direct } : candidates.length === 1 ? candidates[0] : null;
+      if (candidate) {
+        const platform = OpenIDM.corePage(url);
+        render(container, { url: platform ? url : candidate.url, title: document.title, formats: [{ format_id: platform ? "best" : "direct", resolution: "Original", quality: platform ? "Unduh lengkap lewat desktop" : "Unduh media terdeteksi", filesize: candidate.filesize, contentType: candidate.contentType, direct: !platform }] });
         return;
       }
-    } catch (err) {
-      // OpenIDM Core offline or error, continue to fallback
-    }
-
-    // 2. Fallback: Extract from sniffed media (e.g. vod3.cf.dmcdn.net) or <video> src
-    let candidateUrl = (videoEl && videoEl.currentSrc) || (videoEl && videoEl.src) || currentUrl;
-    let detectedStream = null;
-
-    // Check sniffed media from background worker
-    try {
-      const bgRes = await new Promise(resolve => {
-        chrome.runtime.sendMessage({ action: "GET_TAB_MEDIA" }, resolve);
-      });
-      if (bgRes && bgRes.media && bgRes.media.length > 0) {
-        // Find most relevant media (prefer vod3.cf.dmcdn.net or dmcdn or m3u8 or mp4)
-        detectedStream = bgRes.media.slice().reverse().find(m => 
-          m.url.includes("vod3.cf.dmcdn.net") || m.url.includes("dmcdn.net") || m.url.includes(".m3u8") || m.url.includes(".mp4")
-        ) || bgRes.media[bgRes.media.length - 1];
-      }
-    } catch (e) {
-      // background communication issue
-    }
-
-    if (detectedStream && (!candidateUrl || candidateUrl.startsWith("blob:"))) {
-      candidateUrl = detectedStream.url;
-    }
-
-    const pageTitle = document.title.replace(" - YouTube", "").replace(" - Dailymotion", "").trim() || "Video Download";
-
-    if (candidateUrl && !candidateUrl.startsWith("blob:")) {
-      const isDm = candidateUrl.includes("vod3.cf.dmcdn.net") || candidateUrl.includes("dmcdn.net");
-      const fallbackInfo = {
-        title: pageTitle,
-        url: candidateUrl,
-        formats: [
-          {
-            format_id: "best",
-            quality: isDm ? "Dailymotion Stream (DMCDN)" : "Video Asli (Direct Stream)",
-            resolution: "Original",
-            ext: "mp4",
-            filesize: detectedStream ? detectedStream.filesize : 0,
-            has_video: true,
-            has_audio: true
-          }
-        ]
-      };
-      renderFormats(container, fallbackInfo);
-    } else {
-      container.innerHTML = `
-        <div class="openidm-error-item">
-          Pastikan OpenIDM Desktop aktif di background.<br>
-          <button class="openidm-retry-btn" id="openidm-btn-retry">Coba Lagi</button>
-        </div>
-      `;
-      const retryBtn = container.querySelector("#openidm-btn-retry");
-      if (retryBtn) {
-        retryBtn.addEventListener("click", () => {
-          isFetchingFormats = false;
-          loadVideoFormats(container, videoEl);
-        });
-      }
-    }
-    isFetchingFormats = false;
+    } catch { /* Show actionable recovery below. */ }
+    container.textContent = "Jalankan run.bat untuk pilihan kualitas. Putar video atau buka popup ekstensi untuk memilih media terdeteksi.";
+    const retry = document.createElement("button");
+    retry.className = "openidm-retry-btn";
+    retry.textContent = "Coba lagi";
+    retry.addEventListener("click", () => loadFormats(container, player));
+    container.append(retry);
   }
-
-  // Render formats list inside dropdown
-  function renderFormats(container, info) {
-    container.innerHTML = "";
-    const formats = info.formats || [];
-
-    if (formats.length === 0) {
-      container.innerHTML = `<div class="openidm-empty-item">Tidak ada format yang ditemukan.</div>`;
-      return;
-    }
-
-    formats.forEach(f => {
-      const item = document.createElement("div");
+  function render(container, info) {
+    container.replaceChildren();
+    for (const format of info.formats || []) {
+      const item = document.createElement("button");
       item.className = "openidm-dropdown-item";
-
-      const sizeStr = f.filesize_formatted || formatBytes(f.filesize);
-      item.innerHTML = `
-        <div class="openidm-item-left">
-          <span class="openidm-badge-res">${f.resolution}</span>
-          <span class="openidm-item-label">${f.quality}</span>
-        </div>
-        <span class="openidm-item-size">${sizeStr}</span>
-      `;
-
-      item.addEventListener("click", (e) => {
-        e.stopPropagation();
-        triggerDownload(info.url || window.location.href, info.title, f.format_id, f.category || "Video", f.filesize, f.resolution, f.ext);
-        const dropdown = container.closest(".openidm-dropdown");
-        if (dropdown) dropdown.classList.remove("open");
+      const left = document.createElement("span");
+      left.className = "openidm-item-left";
+      const badge = document.createElement("span");
+      badge.className = "openidm-badge-res";
+      badge.textContent = format.resolution || "Original";
+      const label = document.createElement("span");
+      label.className = "openidm-item-label";
+      label.textContent = format.quality || format.ext || "Video";
+      const size = document.createElement("span");
+      size.className = "openidm-item-size";
+      size.textContent = format.filesize_formatted || bytes(format.filesize);
+      left.append(badge, label);
+      item.append(left, size);
+      item.addEventListener("click", async event => {
+        event.stopPropagation();
+        if (item.disabled) return;
+        item.disabled = true;
+        toast("Memulai unduhan…", "info");
+        const payload = { url: info.url || location.href, format_id: format.format_id, category: format.category || "Video", filesize: format.filesize || 0 };
+        if (format.direct) { payload.kind = "direct"; payload.contentType = format.contentType || ""; }
+        else {
+          payload.title = info.title;
+          const title = (info.title || "video").replace(/[\\/*?:"<>|]/g, "").trim();
+          const resolution = format.resolution;
+          payload.filename = `${title}${resolution && !["Default", "Original", "Audio"].includes(resolution) ? ` [${resolution}]` : ""}.${format.ext || "mp4"}`;
+        }
+        try {
+          const response = await send({ action: "DOWNLOAD_VIDEO", payload });
+          toast(response.engine === "browser" ? "Unduhan dimulai di Chrome." : "Unduhan ditambahkan ke antrean OpenIDM Desktop.");
+          container.closest(".openidm-dropdown")?.classList.remove("open");
+        } catch (error) { toast(error.message, "error"); }
+        finally { item.disabled = false; }
       });
-
-      container.appendChild(item);
-    });
-  }
-
-  // Send download request to OpenIDM Core
-  async function triggerDownload(url, title, format_id, category, filesize = 0, resolution = "", ext = "mp4") {
-    showToast("Mengirim unduhan ke OpenIDM Desktop...", "info");
-
-    let cleanTitle = (title || "video").replace(/\[?\b(2160p|1440p|1080p|720p|480p|360p|240p|144p)\b\]?/gi, "").trim();
-    cleanTitle = cleanTitle.replace(/\s+/g, " ").replace(/[\\/*?:"<>|]/g, "").trim();
-    const finalExt = (ext || "mp4").replace(/^\./, "");
-    const filename = resolution && resolution !== "Default" && resolution !== "Original" && resolution !== "Audio"
-      ? `${cleanTitle} [${resolution}].${finalExt}`
-      : `${cleanTitle}.${finalExt}`;
-
-    try {
-      const res = await fetch(`${OPENIDM_API}/download`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: url,
-          title: title,
-          filename: filename,
-          format_id: format_id,
-          filesize: filesize || 0,
-          category: category || "Video",
-          headers: { "Referer": window.location.href }
-        })
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        showToast("✓ Unduhan berhasil ditambahkan ke antrean OpenIDM!");
-      } else {
-        showToast("Gagal: " + (data.error || "Gagal memulai unduhan"), "error");
-      }
-    } catch (err) {
-      showToast("Gagal terhubung ke OpenIDM. Jalankan aplikasi desktop terlebih dahulu!", "error");
+      container.append(item);
     }
   }
-
-  // Scanner for video players on the page
-  function scanAndAttach() {
-    // 1. YouTube Player Specific
-    const ytPlayer = document.querySelector("#movie_player, .html5-video-player");
-    const ytVideo = document.querySelector("video.html5-main-video, video");
-
-    if (ytPlayer && ytVideo) {
-      attachDownloadButton(ytPlayer, ytVideo);
+  function attach(container, player) {
+    if (container.querySelector(":scope > .openidm-floating-panel")) return;
+    const panel = document.createElement("div");
+    panel.className = "openidm-floating-panel";
+    panel.innerHTML = `<button class="openidm-btn-pill" type="button" aria-expanded="false"><svg class="openidm-play-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg><span class="openidm-btn-text">Download this video</span></button><button class="openidm-close-btn" type="button" aria-label="Sembunyikan tombol OpenIDM">×</button><div class="openidm-dropdown"><div class="openidm-dropdown-header">Pilih kualitas video</div><div class="openidm-dropdown-list" aria-live="polite"></div></div>`;
+    if (getComputedStyle(container).position === "static") container.style.position = "relative";
+    container.append(panel);
+    const trigger = panel.querySelector(".openidm-btn-pill");
+    const dropdown = panel.querySelector(".openidm-dropdown");
+    let loading = false;
+    trigger.addEventListener("click", async event => {
+      event.stopPropagation();
+      const open = dropdown.classList.toggle("open");
+      trigger.setAttribute("aria-expanded", String(open));
+      if (open && !loading) {
+        loading = true;
+        try { await loadFormats(panel.querySelector(".openidm-dropdown-list"), player); }
+        finally { loading = false; }
+      }
+    });
+    panel.querySelector(".openidm-close-btn").addEventListener("click", event => { event.stopPropagation(); panel.hidden = true; panel.style.setProperty("display", "none", "important"); });
+    panel.addEventListener("keydown", event => {
+      if (event.key === "Escape") { dropdown.classList.remove("open"); trigger.setAttribute("aria-expanded", "false"); trigger.focus(); }
+    });
+  }
+  function scan() {
+    if (location.hostname === "drive.google.com") {
+      if (!document.getElementById("openidm-gdrive-btn")) {
+        const pill = document.createElement("button");
+        pill.id = "openidm-gdrive-btn";
+        pill.className = "openidm-btn-pill";
+        pill.textContent = "Buka di OpenIDM Desktop";
+        pill.addEventListener("click", () => send({ action: "OPEN_DASHBOARD", url: location.href }).catch(error => toast(error.message, "error")));
+        document.body.append(pill);
+      }
       return;
     }
-
-    // 2. Generic HTML5 Videos
-    const videos = document.querySelectorAll("video");
-    videos.forEach(video => {
-      // Must be visible and reasonably sized
+    for (const video of document.querySelectorAll("video")) {
       const rect = video.getBoundingClientRect();
-      if (rect.width >= 240 && rect.height >= 140) {
-        const parent = video.parentElement || video;
-        attachDownloadButton(parent, video);
-      }
-    });
-
-    // 3. Embedded Video Iframes (Dailymotion, ok.ru, YouTube embeds on streaming portals like Anichin)
-    const iframes = document.querySelectorAll("iframe");
-    iframes.forEach(iframe => {
-      const src = (
-        iframe.getAttribute("src") || 
-        iframe.getAttribute("data-litespeed-src") || 
-        iframe.getAttribute("data-src") || 
-        ""
-      ).toLowerCase();
-
-      const isVideoIframe = [
-        "dailymotion.com", "dmcdn.net", "youtube.com", "youtu.be", "ok.ru", "odnoklassniki.ru", "vimeo.com"
-      ].some(k => src.includes(k));
-
-      if (isVideoIframe) {
-        const parent = iframe.closest(".player-embed, .video-content, .player-area, .video-container, .embed-responsive") || iframe.parentElement || iframe;
-        attachDownloadButton(parent, iframe);
-      }
-    });
-  }
-
-  // Observe DOM changes (for SPAs like YouTube)
-  const observer = new MutationObserver(() => {
-    scanAndAttach();
-  });
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
-
-  // Reset cached info on URL changes
-  let lastUrl = location.href;
-  setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      cachedVideoInfo = null;
-      if (activePanel) {
-        const dropdown = activePanel.querySelector("#openidm-dropdown");
-        if (dropdown) dropdown.classList.remove("open");
-      }
-      scanAndAttach();
+      if (rect.width >= 240 && rect.height >= 140) attach(video.closest("#movie_player, .html5-video-player") || video.parentElement, video);
     }
-  }, 1000);
-
-  // Initial scan
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", scanAndAttach);
-  } else {
-    scanAndAttach();
+    for (const frame of document.querySelectorAll("iframe")) {
+      const src = frame.getAttribute("data-litespeed-src") || frame.getAttribute("src") || frame.getAttribute("data-src") || "";
+      try {
+        const host = new URL(src, location.href).hostname;
+        if (["dailymotion.com", "youtube.com", "youtube-nocookie.com", "youtu.be", "ok.ru", "odnoklassniki.ru", "vimeo.com"].some(d => host === d || host.endsWith(`.${d}`))) {
+          attach(frame.closest(".player-embed, .video-content, .player-area, .video-container, .embed-responsive") || frame.parentElement, frame);
+        }
+      } catch { /* Ignore malformed embedded player URLs. */ }
+    }
   }
-
+  let scanTimer;
+  new MutationObserver(() => {
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(scan, 200);
+  }).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener("click", event => {
+    for (const panel of document.querySelectorAll(".openidm-floating-panel")) {
+      if (!panel.contains(event.target)) {
+        panel.querySelector(".openidm-dropdown")?.classList.remove("open");
+        panel.querySelector(".openidm-btn-pill")?.setAttribute("aria-expanded", "false");
+      }
+    }
+  });
+  setInterval(() => {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+    cache.clear();
+    document.querySelectorAll(".openidm-dropdown.open").forEach(dropdown => dropdown.classList.remove("open"));
+    scan();
+  }, 1000);
+  scan();
 })();

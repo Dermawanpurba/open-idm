@@ -35,7 +35,7 @@ class TaskManager:
         # Resolve URL if it's an embedding page (e.g. anichin, dailymotion embeds, etc.)
         clean_url = url.split("?")[0].lower()
         direct_exts = (".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".flv", ".ts", ".mp3", ".zip", ".rar", ".exe", ".iso")
-        if not clean_url.endswith(direct_exts) and not any(d in url.lower() for d in ["vod3.cf.dmcdn.net", "dmcdn.net"]):
+        if not clean_url.endswith(direct_exts) and not any(d in url.lower() for d in ["vod3.cf.dmcdn.net", "dmcdn.net", "drive.google.com", "drive.usercontent.google.com"]):
             try:
                 embedded = StreamExtractor.resolve_embedded_video(url)
                 if embedded:
@@ -51,6 +51,23 @@ class TaskManager:
             info = StreamExtractor.get_video_info(url)
         except Exception:
             pass
+
+        if info and info.get("is_folder") and (format_id in ["all", "best", ""] or not format_id):
+            files = info.get("files", [])
+            tasks = []
+            for f in files:
+                t = self.create_download(
+                    url=f["download_url"],
+                    title=f["name"],
+                    filename=f["name"],
+                    category=f.get("category", category),
+                    format_id="direct",
+                    thumbnail=f.get("thumbnail", ""),
+                    filesize=f.get("filesize", 0),
+                    headers=headers
+                )
+                tasks.append(t)
+            return tasks[0] if tasks else {}
 
         if info:
             url = info.get("url", url)
@@ -68,14 +85,20 @@ class TaskManager:
                     matched_fmt = next((f for f in formats if f.get("format_id", "").startswith(fid_base)), None)
 
             if matched_fmt:
+                if matched_fmt.get("download_url"):
+                    url = matched_fmt["download_url"]
+                    if matched_fmt.get("quality"):
+                        title = matched_fmt["quality"]
+                        filename = matched_fmt["quality"]
                 # Format matched! Update filesize to specific format size
                 fmt_size = matched_fmt.get("filesize", 0)
                 if fmt_size > 0:
                     filesize = fmt_size
                 res = matched_fmt.get("resolution", "")
                 ext = matched_fmt.get("ext", "mp4")
-                if not filename or filename in ["video.mp4", "file.bin"] or not re.search(r'\[?\b\d{3,4}p\b\]?', filename):
-                    filename = StreamExtractor.make_filename(title, res, ext)
+                if not matched_fmt.get("download_url"):
+                    if not filename or filename in ["video.mp4", "file.bin"] or not re.search(r'\[?\b\d{3,4}p\b\]?', filename):
+                        filename = StreamExtractor.make_filename(title, res, ext)
             else:
                 if not filesize:
                     filesize = info.get("filesize", 0)
@@ -129,6 +152,22 @@ class TaskManager:
         task.start()
 
         return task_data
+
+    def create_batch_download(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        created = []
+        for item in items:
+            t = self.create_download(
+                url=item.get("url") or item.get("download_url"),
+                title=item.get("title") or item.get("name"),
+                filename=item.get("filename") or item.get("name"),
+                category=item.get("category", "General"),
+                format_id=item.get("format_id", "direct"),
+                thumbnail=item.get("thumbnail", ""),
+                filesize=item.get("filesize", 0),
+                headers=item.get("headers", {})
+            )
+            created.append(t)
+        return created
 
     def _on_task_progress(self, data: Dict[str, Any]) -> None:
         self.db.update_progress(

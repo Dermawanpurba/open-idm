@@ -25,3 +25,7 @@ test_*.py
 Thumbs.db
 .vscode/
 .idea/
+
+# Generated Chrome extension packages and browser QA captures
+dist/
+test-results/

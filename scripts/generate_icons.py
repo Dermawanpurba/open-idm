@@ -47,7 +47,7 @@ def create_png(width: int, height: int, color_bg, color_fg) -> bytes:
     return png
 
 if __name__ == "__main__":
-    icons_dir = Path(__file__).resolve().parent / "icons"
+    icons_dir = Path(__file__).resolve().parent.parent / "browser-extension" / "icons"
     icons_dir.mkdir(parents=True, exist_ok=True)
 
     blue_bg = (37, 99, 235, 255)    # #2563EB

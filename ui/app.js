@@ -78,6 +78,14 @@ const previewDuration = document.getElementById("preview-duration");
 const btnOpenFolder = document.getElementById("btn-open-folder");
 const btnRefresh = document.getElementById("btn-refresh");
 
+// Google Drive Batch Elements
+const gdriveFolderPanel = document.getElementById("gdrive-folder-panel");
+const gdriveFilesList = document.getElementById("gdrive-files-list");
+const gdriveCountLabel = document.getElementById("gdrive-count-label");
+const btnGdriveSelectAll = document.getElementById("btn-gdrive-select-all");
+const btnGdriveDeselectAll = document.getElementById("btn-gdrive-deselect-all");
+const groupFormat = document.getElementById("group-format");
+
 // Badges
 const badgeAll = document.getElementById("badge-all");
 const badgeVideo = document.getElementById("badge-video");
@@ -471,8 +479,12 @@ function hideModal() {
   addModal.classList.add("hidden");
   inputUrl.value = "";
   videoPreviewCard.classList.add("hidden");
+  if (gdriveFolderPanel) gdriveFolderPanel.classList.add("hidden");
+  if (groupFormat) groupFormat.classList.remove("hidden");
   selectFormat.innerHTML = `<option value="best">Kualitas Terbaik (Otomatis)</option>`;
   selectedVideoInfo = null;
+  btnStartDownload.textContent = "Mulai Unduh";
+  btnStartDownload.disabled = false;
 }
 
 btnOpenAddModal.addEventListener("click", showModal);
@@ -480,7 +492,59 @@ btnEmptyAdd.addEventListener("click", showModal);
 btnCloseModal.addEventListener("click", hideModal);
 btnCancelModal.addEventListener("click", hideModal);
 
-// Auto-detect video stream domains on input paste/type
+// Google Drive Helper Functions
+function updateGdriveSelectionCount() {
+  const checks = document.querySelectorAll(".gdrive-check");
+  const checked = document.querySelectorAll(".gdrive-check:checked");
+  if (gdriveCountLabel) {
+    gdriveCountLabel.textContent = `${checked.length} dari ${checks.length} berkas dipilih`;
+  }
+  if (btnStartDownload) {
+    if (checked.length === 0) {
+      btnStartDownload.textContent = "Pilih Minimal 1 Berkas";
+      btnStartDownload.disabled = true;
+    } else if (checked.length === checks.length) {
+      btnStartDownload.textContent = `Unduh Semua (${checked.length} Berkas)`;
+      btnStartDownload.disabled = false;
+    } else {
+      btnStartDownload.textContent = `Unduh (${checked.length} Berkas Terpilih)`;
+      btnStartDownload.disabled = false;
+    }
+  }
+}
+
+if (gdriveFilesList) {
+  gdriveFilesList.addEventListener("change", (e) => {
+    if (e.target.classList.contains("gdrive-check")) {
+      updateGdriveSelectionCount();
+    }
+  });
+}
+
+if (btnGdriveSelectAll) {
+  btnGdriveSelectAll.addEventListener("click", () => {
+    document.querySelectorAll(".gdrive-check").forEach(cb => cb.checked = true);
+    updateGdriveSelectionCount();
+  });
+}
+
+if (btnGdriveDeselectAll) {
+  btnGdriveDeselectAll.addEventListener("click", () => {
+    document.querySelectorAll(".gdrive-check").forEach(cb => cb.checked = false);
+    updateGdriveSelectionCount();
+  });
+}
+
+// Auto-detect video stream & cloud drive domains on input paste/type
+inputUrl.addEventListener("paste", () => {
+  setTimeout(() => {
+    const val = inputUrl.value.trim().toLowerCase();
+    if (val.includes("drive.google.com") || val.includes("docs.google.com")) {
+      btnFetchInfo.click();
+    }
+  }, 100);
+});
+
 inputUrl.addEventListener("input", () => {
   const val = inputUrl.value.trim().toLowerCase();
   if (val.includes("vod3.cf.dmcdn.net") || val.includes("dmcdn.net") || val.includes("dailymotion.com")) {
@@ -527,22 +591,48 @@ btnFetchInfo.addEventListener("click", async () => {
     }
     videoPreviewCard.classList.remove("hidden");
 
-    // Populate Formats
-    selectFormat.innerHTML = "";
-    const formats = selectedVideoInfo.formats || [];
-    if (formats.length > 0) {
-      formats.forEach((f, idx) => {
-        const opt = document.createElement("option");
-        opt.value = f.format_id;
-        opt.textContent = `${f.quality} - ${f.filesize_formatted || "Adaptive"}`;
-        selectFormat.appendChild(opt);
+    if (selectedVideoInfo.is_folder) {
+      // Google Drive Folder mode
+      if (groupFormat) groupFormat.classList.add("hidden");
+      if (gdriveFolderPanel) gdriveFolderPanel.classList.remove("hidden");
+
+      gdriveFilesList.innerHTML = "";
+      const files = selectedVideoInfo.files || [];
+      files.forEach((f, idx) => {
+        const itemEl = document.createElement("label");
+        itemEl.className = "gdrive-file-item";
+        itemEl.innerHTML = `
+          <input type="checkbox" class="gdrive-check" checked data-idx="${idx}" data-id="${escapeHtml(f.id)}">
+          <span class="gdrive-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+          <span class="gdrive-file-size">${escapeHtml(f.size_formatted || "")}</span>
+        `;
+        gdriveFilesList.appendChild(itemEl);
       });
-      // Update preview to top format initially
-      const topFmt = formats[0];
-      const durText = selectedVideoInfo.duration_formatted ? `Durasi: ${selectedVideoInfo.duration_formatted} • ` : "";
-      previewDuration.textContent = `${durText}Ukuran: ${topFmt.filesize_formatted || "Adaptive"} (${topFmt.resolution})`;
+      updateGdriveSelectionCount();
     } else {
-      selectFormat.innerHTML = `<option value="best">Kualitas Terbaik (${selectedVideoInfo.filesize_formatted || "Otomatis"})</option>`;
+      // Standard single file / stream mode
+      if (gdriveFolderPanel) gdriveFolderPanel.classList.add("hidden");
+      if (groupFormat) groupFormat.classList.remove("hidden");
+      btnStartDownload.textContent = "Mulai Unduh";
+      btnStartDownload.disabled = false;
+
+      // Populate Formats
+      selectFormat.innerHTML = "";
+      const formats = selectedVideoInfo.formats || [];
+      if (formats.length > 0) {
+        formats.forEach((f, idx) => {
+          const opt = document.createElement("option");
+          opt.value = f.format_id;
+          opt.textContent = `${f.quality} - ${f.filesize_formatted || "Adaptive"}`;
+          selectFormat.appendChild(opt);
+        });
+        // Update preview to top format initially
+        const topFmt = formats[0];
+        const durText = selectedVideoInfo.duration_formatted ? `Durasi: ${selectedVideoInfo.duration_formatted} • ` : "";
+        previewDuration.textContent = `${durText}Ukuran: ${topFmt.filesize_formatted || "Adaptive"} (${topFmt.resolution})`;
+      } else {
+        selectFormat.innerHTML = `<option value="best">Kualitas Terbaik (${selectedVideoInfo.filesize_formatted || "Otomatis"})</option>`;
+      }
     }
 
     if (selectedVideoInfo.category) {
@@ -577,8 +667,55 @@ btnStartDownload.addEventListener("click", async () => {
     return;
   }
 
-  const format_id = selectFormat.value;
   const category = selectCategory.value;
+
+  // Handle Google Drive folder batch download
+  if (selectedVideoInfo && selectedVideoInfo.is_folder) {
+    const checkedBoxes = Array.from(document.querySelectorAll(".gdrive-check:checked"));
+    if (checkedBoxes.length === 0) {
+      alert("Pilih minimal satu berkas untuk diunduh!");
+      return;
+    }
+
+    const itemsToDownload = checkedBoxes.map(cb => {
+      const idx = parseInt(cb.dataset.idx, 10);
+      const f = selectedVideoInfo.files[idx];
+      return {
+        url: f.download_url,
+        title: f.name,
+        filename: f.name,
+        category: f.category || category,
+        filesize: f.filesize || 0,
+        thumbnail: f.thumbnail || ""
+      };
+    });
+
+    btnStartDownload.disabled = true;
+    btnStartDownload.textContent = `Menambahkan ${itemsToDownload.length} berkas...`;
+
+    try {
+      const res = await fetch("/api/batch-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: itemsToDownload })
+      });
+      const data = await res.json();
+      if (data.success) {
+        hideModal();
+        fetchDownloads();
+      } else {
+        alert("Gagal menambahkan berkas: " + (data.error || ""));
+      }
+    } catch (err) {
+      alert("Terjadi kesalahan saat memulai batch download: " + err.message);
+    } finally {
+      btnStartDownload.disabled = false;
+      btnStartDownload.textContent = "Mulai Unduh";
+    }
+    return;
+  }
+
+  const format_id = selectFormat.value;
 
   let targetFilesize = 0;
   let targetFilename = selectedVideoInfo ? selectedVideoInfo.filename : null;
@@ -717,3 +854,12 @@ fetchDownloads();
 checkServerStatus();
 setInterval(fetchDownloads, 1000);
 setInterval(checkServerStatus, 5000);
+
+// Check query param e.g. ?addUrl=...
+const urlParams = new URLSearchParams(window.location.search);
+const addUrlParam = urlParams.get("addUrl");
+if (addUrlParam) {
+  showModal();
+  inputUrl.value = addUrlParam;
+  setTimeout(() => btnFetchInfo.click(), 250);
+}

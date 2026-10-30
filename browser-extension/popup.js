@@ -1,152 +1,142 @@
-// OpenIDM Extension - Popup Script
-
-const statusIndicator = document.getElementById("status-indicator");
-const statusText = document.getElementById("status-text");
-const mediaList = document.getElementById("media-list");
-const btnOpenDashboard = document.getElementById("btn-open-dashboard");
-
-function formatBytes(bytes) {
-  if (!bytes || bytes <= 0) return "Ukuran tidak diketahui";
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
+"use strict";
+const $ = id => document.getElementById(id);
+let currentTab = null;
+const modeHelp = {
+  auto: "Memakai desktop jika aktif; file langsung memakai Chrome saat desktop mati.",
+  browser: "File langsung diunduh oleh Chrome. Streaming dan halaman video memerlukan desktop.",
+  core: "Semua unduhan dikirim ke desktop. Jalankan run.bat terlebih dahulu."
+};
+async function send(message) {
+  const result = await chrome.runtime.sendMessage(message);
+  if (!result || result.success === false || result.error) throw new Error(result?.error || "Ekstensi tidak merespons. Muat ulang ekstensi.");
+  return result;
 }
-
-// Check OpenIDM Core Status
-chrome.runtime.sendMessage({ action: "CHECK_SERVER" }, (response) => {
-  if (response && response.online) {
-    statusIndicator.className = "status-indicator online";
-    statusText.textContent = "Core Online (Port 6899)";
-  } else {
-    statusIndicator.className = "status-indicator offline";
-    statusText.textContent = "Core Offline (Jalankan run.bat)";
+function feedback(message, error = false) {
+  $("feedback").hidden = false;
+  $("feedback").className = error ? "error" : "";
+  $("feedback").textContent = message;
+}
+function bytes(value) {
+  if (!(value > 0)) return "Ukuran belum diketahui";
+  const i = Math.min(4, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / 1024 ** i).toFixed(i ? 1 : 0)} ${["B", "KB", "MB", "GB", "TB"][i]}`;
+}
+function node(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text != null) element.textContent = text;
+  return element;
+}
+async function startDownload(payload, button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Memulai…";
+  try {
+    const result = await send({ action: "DOWNLOAD_VIDEO", tabId: currentTab?.id, payload });
+    feedback(result.engine === "browser" ? "Unduhan dimulai di Chrome." : "Unduhan masuk antrean desktop. Pantau di Dashboard desktop.");
+    await loadDownloads();
+  } catch (error) { feedback(error.message, true); }
+  finally { button.disabled = false; button.textContent = label; }
+}
+async function checkStatus() {
+  $("status-text").textContent = "Memeriksa desktop…";
+  const result = await send({ action: "CHECK_SERVER" });
+  $("status-text").className = result.online ? "online" : "offline";
+  $("status-text").textContent = result.online ? "Desktop terhubung" : "Desktop belum aktif";
+  $("connection-help").textContent = result.online
+    ? `${result.data.active_downloads} unduhan aktif di desktop.`
+    : "File langsung tetap bisa diunduh. Jalankan run.bat untuk fitur video lengkap.";
+}
+async function loadMedia() {
+  [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const url = OpenIDM.httpUrl(currentTab?.url);
+  $("page-title").textContent = currentTab?.title || "Halaman tidak tersedia";
+  $("page-title").title = currentTab?.title || "";
+  $("btn-page").disabled = !url;
+  const { media = [] } = await send({ action: "GET_TAB_MEDIA", tabId: currentTab?.id });
+  $("media-count").textContent = media.length ? `(${media.length})` : "";
+  $("media-list").replaceChildren();
+  if (!media.length) {
+    $("media-list").append(node("p", "empty-state", url ? "Putar video lalu klik Periksa lagi. Untuk YouTube atau Drive, gunakan Kirim halaman." : "Buka halaman web untuk mendeteksi media. Halaman internal Chrome tidak dapat dipindai."));
+    return;
   }
-});
-
-// Load Media for Active Tab
-chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-  if (!tabs || tabs.length === 0) return;
-  const currentTab = tabs[0];
-
-  chrome.runtime.sendMessage({ action: "GET_TAB_MEDIA", tabId: currentTab.id }, (response) => {
-    const media = response && response.media ? response.media : [];
-
-    if (media.length === 0) {
-      const tabUrl = currentTab.url || "";
-      if (tabUrl.includes("anichin.") || tabUrl.includes("dailymotion.") || tabUrl.includes("youtube.") || tabUrl.includes("youtu.be")) {
-        mediaList.innerHTML = `
-          <div class="media-card">
-            <div class="media-card-top">
-              <span class="media-badge">STREAMING PAGE</span>
-              <span class="media-size">Deteksi Otomatis</span>
-            </div>
-            <div class="media-url" title="${tabUrl}">${tabUrl}</div>
-            <button class="btn-download-sm" id="btn-dl-tab">Analisis & Unduh Video Halaman Ini</button>
-          </div>
-        `;
-        document.getElementById("btn-dl-tab").addEventListener("click", () => {
-          const btn = document.getElementById("btn-dl-tab");
-          btn.textContent = "Menganalisis & Mengirim...";
-          btn.disabled = true;
-          chrome.runtime.sendMessage({
-            action: "DOWNLOAD_VIDEO",
-            payload: {
-              url: tabUrl,
-              category: "Video",
-              format_id: "best",
-              title: currentTab.title || "Video Download",
-              headers: { "Referer": tabUrl }
-            }
-          }, (res) => {
-            if (res && res.success) {
-              btn.textContent = "✓ Terkirim ke OpenIDM!";
-              btn.style.background = "#2563EB";
-            } else {
-              btn.textContent = "Gagal kirim";
-              btn.style.background = "#EF4444";
-            }
-          });
-        });
-        return;
-      }
-
-      mediaList.innerHTML = `<div class="empty-state">Tidak ada media streaming yang terdeteksi di tab ini. Coba putar video di halaman web.</div>`;
-      return;
-    }
-
-    mediaList.innerHTML = "";
-    media.forEach((item, index) => {
-      const card = document.createElement("div");
-      card.className = "media-card";
-
-      let ext = "VIDEO";
-      const cleanPath = item.url.split("?")[0].split("#")[0];
-      const match = cleanPath.match(/\.([a-zA-Z0-9]{2,5})$/);
-      if (match) {
-        ext = match[1].toUpperCase();
-      } else if (item.url.includes("vod3.cf.dmcdn.net") || item.url.includes("dmcdn.net") || item.url.includes("dailymotion.com")) {
-        ext = "VIDEO (DM)";
-      } else if (item.mediaType === "audio") {
-        ext = "AUDIO";
-      } else {
-        ext = "VIDEO";
-      }
-      const sizeStr = formatBytes(item.filesize);
-
-      card.innerHTML = `
-        <div class="media-card-top">
-          <span class="media-badge">${ext}</span>
-          <span class="media-size">${sizeStr}</span>
-        </div>
-        <div class="media-url" title="${item.url}">${item.url}</div>
-        <button class="btn-download-sm" id="btn-dl-${index}">Unduh via OpenIDM</button>
-      `;
-
-      card.querySelector(`#btn-dl-${index}`).addEventListener("click", () => {
-        const btn = card.querySelector(`#btn-dl-${index}`);
-        btn.textContent = "Mengirim...";
-        btn.disabled = true;
-
-        // If on YouTube, Dailymotion or social platforms, use the main page URL so yt-dlp fetches full video+audio tracks
-        const tabUrl = currentTab.url || "";
-        const isPlatform = [
-          "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "twitter.com", "x.com", "dailymotion.com"
-        ].some(p => tabUrl.toLowerCase().includes(p));
-
-        const isDmCdn = item.url.includes("vod3.cf.dmcdn.net") || item.url.includes("dmcdn.net");
-        // Prioritize canonical Dailymotion URL if item is already resolved, otherwise use tabUrl for platform
-        let targetUrl = item.url;
-        if (isPlatform && !isDmCdn && tabUrl.startsWith("http") && !item.url.includes("dailymotion.com/video/")) {
-          targetUrl = tabUrl;
-        }
-
-        chrome.runtime.sendMessage({
-          action: "DOWNLOAD_VIDEO",
-          payload: {
-            url: targetUrl,
-            category: "Video",
-            format_id: "best",
-            filesize: item.filesize || 0,
-            title: currentTab.title || "Video Download",
-            headers: item.headers || { "Referer": currentTab.url || "" }
-          }
-        }, (res) => {
-          if (res && res.success) {
-            btn.textContent = "✓ Terkirim!";
-            btn.style.background = "#2563EB";
-          } else {
-            btn.textContent = "Gagal kirim";
-            btn.style.background = "#EF4444";
-          }
-        });
-      });
-
-      mediaList.appendChild(card);
+  for (const item of media) {
+    const card = node("article", "media-card");
+    const top = node("div", "media-card-top");
+    top.append(node("span", "media-badge", item.mediaType === "stream" ? "STREAM · DESKTOP" : item.mediaType === "audio" ? "AUDIO" : "VIDEO"), node("span", "media-size", bytes(item.filesize)));
+    const title = node("p", "media-url", item.url);
+    title.title = item.url;
+    const button = node("button", "", "Unduh media");
+    button.addEventListener("click", () => {
+      // Canonical platform URLs preserve both video and audio tracks.
+      const target = OpenIDM.corePage(url) ? url : item.url;
+      void startDownload({ url: target, contentType: item.contentType, filesize: item.filesize,
+        category: item.mediaType === "audio" ? "Music" : "Video" }, button);
     });
-  });
+    card.append(top, title, button);
+    $("media-list").append(card);
+  }
+}
+async function loadDownloads() {
+  const { downloads = [] } = await send({ action: "GET_DOWNLOADS" });
+  $("downloads-list").replaceChildren();
+  if (!downloads.length) $("downloads-list").append(node("p", "empty-state", "Belum ada unduhan dari ekstensi ini."));
+  for (const item of downloads) {
+    const entry = node("div", "download-item");
+    const name = node("p", "download-name", item.filename.split(/[\\/]/).pop() || "Mengambil nama file…");
+    name.title = item.filename;
+    const state = item.state === "complete" ? (item.exists ? "Selesai" : "File telah dipindahkan / dihapus") : item.paused ? "Dijeda" : item.state === "interrupted" ? `Terhenti: ${item.error || "coba lagi"}` : "Mengunduh";
+    const row = node("div", "download-row");
+    row.append(node("span", "download-detail", `${state} · ${bytes(item.bytesReceived)}`));
+    const control = item.state === "complete" && item.exists ? "show" : item.paused || item.canResume ? "resume" : item.state === "in_progress" ? "pause" : null;
+    if (control) {
+      const button = node("button", "quiet", { show: "Folder", resume: "Lanjut", pause: "Jeda" }[control]);
+      button.addEventListener("click", async () => {
+        try { await send({ action: "CONTROL_DOWNLOAD", id: item.id, control }); await loadDownloads(); }
+        catch (error) { feedback(error.message, true); }
+      });
+      row.append(button);
+    }
+    entry.append(name, row);
+    if (item.state === "in_progress") {
+      const progress = node("progress");
+      progress.setAttribute("aria-label", `Progres ${name.textContent}`);
+      if (item.totalBytes > 0) { progress.max = item.totalBytes; progress.value = item.bytesReceived; }
+      entry.append(progress);
+    }
+    $("downloads-list").append(entry);
+  }
+}
+$("download-form").addEventListener("submit", event => {
+  event.preventDefault();
+  void startDownload({ url: $("download-url").value.trim() }, $("btn-add"));
 });
-
-// Open Dashboard
-btnOpenDashboard.addEventListener("click", () => {
-  chrome.tabs.create({ url: "http://127.0.0.1:6899" });
+$("btn-page").addEventListener("click", () => {
+  if (currentTab?.url) void startDownload({ url: currentTab.url }, $("btn-page"));
 });
+$("btn-open-dashboard").addEventListener("click", () => send({ action: "OPEN_DASHBOARD" }).catch(error => feedback(error.message, true)));
+$("btn-downloads").addEventListener("click", () => chrome.tabs.create({ url: "chrome://downloads/" }));
+$("btn-refresh").addEventListener("click", async () => {
+  $("btn-refresh").disabled = true;
+  try { await Promise.all([checkStatus(), loadMedia(), loadDownloads()]); }
+  catch (error) { feedback(error.message, true); }
+  finally { $("btn-refresh").disabled = false; }
+});
+async function saveSettings() {
+  try {
+    await send({ action: "SAVE_SETTINGS", settings: { mode: $("download-mode").value, saveAs: $("save-as").checked } });
+    $("mode-help").textContent = modeHelp[$("download-mode").value];
+  } catch (error) { feedback(error.message, true); }
+}
+$("download-mode").addEventListener("change", saveSettings);
+$("save-as").addEventListener("change", saveSettings);
+async function init() {
+  const { settings } = await send({ action: "GET_SETTINGS" });
+  $("download-mode").value = settings.mode;
+  $("save-as").checked = settings.saveAs;
+  $("mode-help").textContent = modeHelp[settings.mode];
+  await Promise.all([checkStatus(), loadMedia(), loadDownloads()]);
+}
+void init().catch(error => feedback(error.message, true));
+const refreshTimer = setInterval(() => { void loadDownloads().catch(() => {}); }, 1500);
+window.addEventListener("pagehide", () => clearInterval(refreshTimer));

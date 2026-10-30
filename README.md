@@ -1,6 +1,18 @@
 # OpenIDM (Open-Source Video & File Download Manager)
 
-OpenIDM adalah alternatif open-source dari **Internet Download Manager (IDM)** yang dilengkapi kemampuan mendeteksi (*sniffing*) dan mengunduh video apa pun yang sedang diputar di browser web (YouTube, TikTok, Twitter/X, Instagram, Facebook, Vimeo, hingga streaming HTML5).
+## Ekstensi Chrome 1.1
+
+Ekstensi kini mendukung unduhan file langsung melalui Chrome tanpa desktop, mode Otomatis/Chrome/Desktop, menu klik kanan, input URL, serta progres dan jeda/lanjut unduhan Chrome. Streaming dan pilihan kualitas video tetap menggunakan mesin desktop. [Panduan pemasangan, izin, dan batasan](browser-extension/INSTALL.md).
+
+**Pasang:** buka `chrome://extensions`, aktifkan **Developer mode**, klik **Load unpacked**, lalu pilih folder `browser-extension`. Setelah memperbarui ekstensi, reload ekstensi dan tab situs. Mesin desktop diperlukan untuk video platform, HLS/DASH, dan folder Drive; tidak semua video dapat diekstrak dan media DRM tidak didukung.
+
+**Paket ZIP:** jalankan `powershell -ExecutionPolicy Bypass -File scripts\package-extension.ps1`. Hasilnya berada di `dist/`.
+
+**Pengujian:** `node --test tests/extension.test.cjs`. Pengujian browser: `node tests/browser-smoke.cjs` (memerlukan Puppeteer dengan Chrome for Testing; menggunakan profil sementara dan server fixture lokal).
+
+Uji API dan unduhan mesin Python asli: `python tests/core-download-smoke.py` (database dan folder unduhan sementara).
+
+OpenIDM adalah alternatif open-source dari **Internet Download Manager (IDM)** untuk mendeteksi (*sniffing*) media dan mengunduh file dari browser. Dukungan video platform dan streaming mengikuti kemampuan mesin `yt-dlp` yang terpasang; media DRM tidak didukung.
 
 ---
 
@@ -15,13 +27,18 @@ OpenIDM adalah alternatif open-source dari **Internet Download Manager (IDM)** y
    - Otomatis menggabungkan pecahan berkas saat unduhan selesai.
    - Mendukung jeda (*pause*) dan lanjut (*resume*).
 3. **Stream Extractor Engine (`yt-dlp` Core)**:
-   - Mampu mengekstrak stream video terenkripsi atau berpisah (video track + audio track) pada platform modern.
+   - Mengekstrak stream yang didukung dan menggabungkan video track + audio track menggunakan FFmpeg.
 4. **Desktop Control Dashboard**:
    - Antarmuka web modern dengan gaya *Swiss Minimalist* tanpa AI slop.
    - Kategori otomatis: *Video*, *Musik*, *Dokumen*, *Program*, *Arsip/ZIP*.
    - Filter status unduhan (*Sedang Berjalan*, *Selesai*, *Dijeda*, *Error*).
    - Pengukur kecepatan total real-time (*KB/s* atau *MB/s*).
    - Pintasan langsung membuka file atau folder penyimpanan di Windows Explorer.
+5. **Google Drive Folder & File Recognizer (Turbo Multi-Segment)**:
+   - Mengenali tautan **Folder Google Drive** secara otomatis tanpa perlu Google Cloud API Key.
+   - Menampilkan seluruh berkas di dalam folder secara instan beserta ukuran dan preview thumbnail.
+   - Fitur **Batch Download**: unduh seluruh berkas folder sekaligus atau pilih berkas tertentu dengan checkbox.
+   - Mendukung tautan berkas tunggal Google Drive dengan bypass scan virus dan multi-koneksi 8-thread paralel.
 
 ---
 
@@ -32,16 +49,17 @@ open-idm/
 ├── browser-extension/         # Ekstensi Browser (Manifest V3)
 │   ├── manifest.json          # Konfigurasi ekstensi Chrome/Edge
 │   ├── background.js          # Service worker sniffer jaringan media
-│   ├── content.js             # Injector tombol "Download this video"
+│   ├── content.js             # Injector tombol "Download this video" & Google Drive
 │   ├── content.css            # Styling tombol floating & menu resolusi
 │   ├── popup.html/.js/.css    # Panel toolbar ekstensi
 │   └── icons/                 # Ikon ekstensi (16x16, 48x48, 128x128)
 ├── core/                      # Engine Backend & Downloader
 │   ├── config.py              # Konfigurasi folder & port lokal (6899)
 │   ├── database.py            # SQLite database manager (WAL mode)
+│   ├── gdrive_handler.py      # Google Drive folder parser & direct resolver
 │   ├── stream_extractor.py    # Parser video URL & resolusi
 │   ├── segmented_downloader.py# Multi-connection download engine
-│   ├── task_manager.py        # Antrean unduhan & thread controller
+│   ├── task_manager.py        # Antrean unduhan & batch thread controller
 │   └── server.py              # REST API server & static UI host
 ├── ui/                        # Antarmuka Desktop Dashboard
 │   ├── index.html             # Tampilan utama
@@ -80,7 +98,7 @@ Browser akan otomatis membuka halaman dashboard OpenIDM di `http://127.0.0.1:689
    ```
    c:\xampp\htdocs\open-idm\browser-extension
    ```
-6. Ekstensi **OpenIDM Video Downloader** kini telah aktif di browser Anda!
+6. Ekstensi **OpenIDM — Download Manager** kini telah aktif di browser Anda!
 
 ---
 

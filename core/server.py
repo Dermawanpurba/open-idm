@@ -112,6 +112,15 @@ class OpenIDMRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"success": True, "task": task})
                 return
 
+            if path == "/api/batch-download":
+                items = body.get("items", [])
+                if not items:
+                    self._send_json({"error": "Daftar berkas (items) diperlukan"}, status=400)
+                    return
+                tasks = task_manager.create_batch_download(items)
+                self._send_json({"success": True, "created_count": len(tasks), "tasks": tasks})
+                return
+
             if path == "/api/control":
                 task_id = body.get("id")
                 action = body.get("action")
