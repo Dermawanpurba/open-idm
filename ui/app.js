@@ -863,3 +863,16 @@ if (addUrlParam) {
   inputUrl.value = addUrlParam;
   setTimeout(() => btnFetchInfo.click(), 250);
 }
+
+// Tombol Shutdown / Matikan Server
+const btnShutdown = document.getElementById("btn-shutdown");
+if (btnShutdown) {
+  btnShutdown.addEventListener("click", async () => {
+    if (confirm("Apakah Anda yakin ingin mematikan aplikasi OpenIDM?")) {
+      try {
+        await fetch("/api/shutdown", { method: "POST" });
+      } catch (e) {}
+      alert("OpenIDM Core berhasil dimatikan. Tab ini dapat ditutup.");
+    }
+  });
+}

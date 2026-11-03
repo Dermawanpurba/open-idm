@@ -1,10 +1,14 @@
 import os
+import sys
 import shutil
 from pathlib import Path
 from typing import Optional
 
-# Base Paths
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Base Paths (supports both standard Python run and PyInstaller frozen bundle)
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
 BIN_DIR = BASE_DIR / "bin"
 DOWNLOADS_DIR = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Downloads" / "OpenIDM"
 DB_PATH = BASE_DIR / "downloads.db"

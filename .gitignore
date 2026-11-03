@@ -29,3 +29,7 @@ Thumbs.db
 # Generated Chrome extension packages and browser QA captures
 dist/
 test-results/
+
+# PyInstaller build artifacts
+build/
+*.spec

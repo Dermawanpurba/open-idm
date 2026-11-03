@@ -23,6 +23,7 @@ class DownloadTask:
         filesize: int = 0,
         filepath: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        prev_error_message: Optional[str] = None,
         on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_complete: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str, str], None]] = None
@@ -34,6 +35,7 @@ class DownloadTask:
         self.category = category
         self.format_id = format_id
         self.headers = headers or {}
+        self.prev_error_message = prev_error_message or ""
 
         cat_folder = DOWNLOADS_DIR / self.category
         cat_folder.mkdir(parents=True, exist_ok=True)
@@ -111,22 +113,99 @@ class DownloadTask:
                 "chunks": self.chunks_data
             })
 
+    @staticmethod
+    def _safe_rename_with_retries(src: str, dst: str, max_retries: int = 25, delay: float = 0.4) -> bool:
+        if not os.path.exists(src):
+            return False
+        if os.path.abspath(src) == os.path.abspath(dst):
+            return True
+        for attempt in range(max_retries):
+            try:
+                if os.path.exists(dst):
+                    try:
+                        os.remove(dst)
+                    except Exception:
+                        pass
+                os.replace(src, dst)
+                return True
+            except OSError:
+                if attempt >= max_retries - 1:
+                    return False
+                time.sleep(delay)
+        return False
+
     def _run(self) -> None:
         try:
-            # Clean up broken partial files from earlier failed attempt (like IDM)
+            # 1. Quick check: If completed final file already exists and is non-empty
+            if os.path.exists(self.filepath) and os.path.getsize(self.filepath) > 0:
+                self.filesize = os.path.getsize(self.filepath)
+                self.downloaded_bytes = self.filesize
+                self.status = "completed"
+                self.progress = 100.0
+                self.speed = 0.0
+                self.eta = 0
+                self._notify_progress()
+                if self.on_complete:
+                    self.on_complete(self.task_id)
+                return
+
             base_dir = Path(self.filepath).parent
             base_stem = Path(self.filepath).stem
+
+            # 2. Auto-Recovery: If .part file exists from a previous completed download that hit rename file-lock (WinError 32)
+            part_path = self.filepath + ".part"
+            if not os.path.exists(part_path) and base_dir.exists():
+                for cand in base_dir.iterdir():
+                    if cand.is_file() and cand.name.startswith(base_stem) and cand.name.endswith(".part") and "-frag" not in cand.name.lower():
+                        part_path = str(cand)
+                        break
+
+            if os.path.exists(part_path) and os.path.getsize(part_path) > 1024 * 1024:
+                prev_err = (getattr(self, "prev_error_message", "") or "").lower()
+                is_rename_error = "unable to rename" in prev_err or "winerror 32" in prev_err or "being used by another process" in prev_err
+                part_size = os.path.getsize(part_path)
+                is_full_size = self.filesize > 0 and (part_size >= self.filesize * 0.95 or abs(part_size - self.filesize) <= 10 * 1024 * 1024)
+
+                if is_rename_error or is_full_size:
+                    dest_target = self.filepath
+                    if not dest_target.lower().endswith(Path(part_path).stem.split('.')[-1].lower()):
+                        dest_target = part_path[:-5]
+
+                    if self._safe_rename_with_retries(part_path, dest_target):
+                        self.filepath = dest_target
+                        self.filename = os.path.basename(dest_target)
+                        self.filesize = os.path.getsize(dest_target)
+                        self.downloaded_bytes = self.filesize
+                        self.status = "completed"
+                        self.progress = 100.0
+                        self.speed = 0.0
+                        self.eta = 0
+                        # Clean up any leftover fragment files
+                        if base_dir.exists():
+                            for p in base_dir.iterdir():
+                                if p.is_file() and p.name.startswith(base_stem) and "-frag" in p.name.lower():
+                                    try:
+                                        p.unlink()
+                                    except Exception:
+                                        pass
+                        from .database import DatabaseManager
+                        DatabaseManager().update_file_info(self.task_id, self.filepath, self.filename, self.filesize)
+                        DatabaseManager().update_status(self.task_id, "completed")
+                        self._notify_progress()
+                        if self.on_complete:
+                            self.on_complete(self.task_id)
+                        return
+
+            # 3. Clean up broken temporary fragment/metadata files safely (using iterdir without glob syntax brackets collision)
             if base_dir.exists():
-                for p in base_dir.glob(f"{base_stem}*.part*"):
-                    try:
-                        p.unlink()
-                    except Exception:
-                        pass
-                for p in base_dir.glob(f"{base_stem}*.ytdl"):
-                    try:
-                        p.unlink()
-                    except Exception:
-                        pass
+                for p in base_dir.iterdir():
+                    if p.is_file() and p.name.startswith(base_stem):
+                        p_lower = p.name.lower()
+                        if p_lower.endswith(('.ytdl', '.temp', '.tmp')) or '-frag' in p_lower:
+                            try:
+                                p.unlink()
+                            except Exception:
+                                pass
 
             # Check if URL is Google Drive
             from .gdrive_handler import GoogleDriveHandler
@@ -410,6 +489,10 @@ class DownloadTask:
             "windowsfilenames": True,
             "retries": 30,
             "fragment_retries": 30,
+            "file_access_retries": 30,
+            "retry_sleep_functions": {
+                "file_access": lambda n: min(0.5 * (1.5 ** n), 5.0),
+            },
             "socket_timeout": 60,
             "concurrent_fragment_downloads": 8,  # 8 parallel download connections running concurrently
             "buffersize": 1024 * 1024,
@@ -439,7 +522,37 @@ class DownloadTask:
                 info = ydl.extract_info(self.url, download=True)
         except Exception as dl_err:
             err_str = str(dl_err).lower()
-            if "postprocessing" in err_str or "invalid data" in err_str or "requested format" in err_str:
+            if "unable to rename" in err_str or "winerror 32" in err_str or "being used by another process" in err_str:
+                # yt-dlp finished writing and closed files, but Windows Defender/Index locked the rename.
+                # Auto-recover by locating the .part file and safely renaming it with retries.
+                parent_dir = Path(self.filepath).parent
+                base_stem = Path(self.filepath).stem
+                part_candidate = None
+                if os.path.exists(self.filepath + ".part"):
+                    part_candidate = self.filepath + ".part"
+                elif parent_dir.exists():
+                    for cand in parent_dir.iterdir():
+                        if cand.is_file() and cand.name.startswith(base_stem) and cand.name.endswith(".part"):
+                            part_candidate = str(cand)
+                            break
+
+                if part_candidate:
+                    target_dest = part_candidate[:-5]
+                    if self._safe_rename_with_retries(part_candidate, target_dest):
+                        actual_filename = target_dest
+                        info = {"filepath": target_dest}
+                        if parent_dir.exists():
+                            for p in parent_dir.iterdir():
+                                if p.is_file() and p.name.startswith(base_stem) and "-frag" in p.name.lower():
+                                    try:
+                                        p.unlink()
+                                    except Exception:
+                                        pass
+                    else:
+                        raise dl_err
+                else:
+                    raise dl_err
+            elif "postprocessing" in err_str or "invalid data" in err_str or "requested format" in err_str:
                 if target_h:
                     ydl_opts["format"] = f"bestvideo*[height<={target_h}]+bestaudio/best[height<={target_h}][ext=mp4]/best[height<={target_h}]"
                 else:

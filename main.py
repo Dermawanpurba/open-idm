@@ -1,9 +1,22 @@
+import os
 import sys
 import time
 import webbrowser
 import threading
 from core.config import SERVER_HOST, SERVER_PORT, DOWNLOADS_DIR
 from core.server import run_server
+
+# Safely handle windowless mode (--noconsole) where stdout/stderr are None
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.devnull, 'w', encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.devnull, 'w', encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 def print_banner():
     print("=" * 65)

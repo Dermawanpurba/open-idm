@@ -239,6 +239,7 @@ class TaskManager:
                 filesize=item.get("filesize", 0),
                 filepath=item["filepath"],
                 headers=headers_dict,
+                prev_error_message=item.get("error_message", ""),
                 on_progress=self._on_task_progress,
                 on_complete=self._on_task_complete,
                 on_error=self._on_task_error

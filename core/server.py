@@ -155,6 +155,15 @@ class OpenIDMRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"success": success})
                 return
 
+            if path == "/api/shutdown":
+                self._send_json({"success": True, "message": "Server shutting down..."})
+                import threading, time
+                def _do_shutdown():
+                    time.sleep(0.5)
+                    os._exit(0)
+                threading.Thread(target=_do_shutdown, daemon=True).start()
+                return
+
             self._send_json({"error": "Endpoint not found"}, status=404)
         except Exception as e:
             import traceback
