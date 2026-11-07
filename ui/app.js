@@ -94,6 +94,17 @@ const badgeCompressed = document.getElementById("badge-compressed");
 const badgeDocs = document.getElementById("badge-docs");
 const badgePrograms = document.getElementById("badge-programs");
 
+const STATUS_LABEL = { downloading: "Mengunduh", completed: "Selesai", paused: "Dijeda", error: "Error", queued: "Antre", pending: "Menunggu" };
+const ICON_CHEVRON_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+const ICON_CHEVRON_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>';
+const ICON_LAYERS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+
 // Utility: Format Bytes
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return "0 B";
@@ -157,6 +168,9 @@ function renderDownloads() {
     }
   });
   totalSpeedEl.textContent = formatSpeed(totalSpeed);
+  setText("stat-active", downloadsData.filter(d => d.status === "downloading").length);
+  setText("stat-done", downloadsData.filter(d => d.status === "completed").length);
+  setText("stat-total", downloadsData.length);
 
   if (filtered.length === 0) {
     downloadsList.innerHTML = "";
@@ -180,7 +194,7 @@ function renderDownloads() {
     }
 
     const thumbHtml = item.thumbnail
-      ? `<img src="${item.thumbnail}" class="file-thumb" alt="Thumbnail">`
+      ? `<img src="${escapeHtml(item.thumbnail)}" class="file-thumb" alt="" loading="lazy">`
       : `<div class="file-icon-box">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="23 7 16 12 23 17 23 7"></polygon>
@@ -197,12 +211,12 @@ function renderDownloads() {
           <div class="file-cell">
             ${thumbHtml}
             <div class="file-info">
-              <span class="file-title" title="${item.title}">${item.title}</span>
-              <span class="file-meta">${item.filename}</span>
+              <span class="file-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
+              <span class="file-meta">${escapeHtml(item.filename)}</span>
             </div>
           </div>
         </td>
-        <td>${formatBytes(item.filesize)}</td>
+        <td class="cell-num">${item.filesize > 0 ? formatBytes(item.filesize) : "-"}</td>
         <td>
           <div class="progress-box">
             <div class="progress-bar-bg">
@@ -214,43 +228,43 @@ function renderDownloads() {
             </div>
           </div>
         </td>
-        <td>
+        <td class="cell-num">
           ${isDownloading ? formatSpeed(item.speed) : "-"}
           ${(isDownloading || isPaused || isError) ? `
             <div style="margin-top: 4px;">
-              <button class="btn-toggle-connection" onclick="toggleConnectionDetails('${item.id}', event)" title="Lihat/Sembunyikan Pembagian Koneksi IDM">
-                ${isError ? '⚠️ Info Kendala' : `⚡ ${item.num_chunks || 8} Koneksi`} ${expandedTaskIds.has(item.id) ? '▲' : '▼'}
+              <button class="btn-toggle-connection ${isError ? 'is-error' : ''}" onclick="toggleConnectionDetails('${item.id}', event)" aria-expanded="${expandedTaskIds.has(item.id)}" title="Lihat/Sembunyikan pembagian koneksi">
+                ${isError ? ICON_ALERT + ' Info Kendala' : ICON_LAYERS + ` ${item.num_chunks || 8} Koneksi`} ${expandedTaskIds.has(item.id) ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN}
               </button>
             </div>
           ` : ''}
         </td>
         <td>
-          <span class="status-pill ${item.status}" ${item.error_message ? `title="${item.error_message.replace(/"/g, '&quot;')}" style="cursor: pointer;" onclick="showErrorModal('${item.id}')"` : ''}>${item.status}</span>
+          <span class="status-pill ${escapeHtml(item.status)}" ${item.error_message ? `title="${escapeHtml(item.error_message)}" role="button" tabindex="0" onclick="showErrorModal('${item.id}')"` : ''}>${STATUS_LABEL[item.status] || escapeHtml(item.status)}</span>
         </td>
         <td>
           <div class="row-actions">
             ${
               isDownloading
-                ? `<button class="btn btn-ghost btn-icon" onclick="controlDownload('${item.id}', 'pause')" title="Jeda">
+                ? `<button class="btn btn-ghost btn-icon" onclick="controlDownload('${item.id}', 'pause')" title="Jeda" aria-label="Jeda">
                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
                    </button>`
                 : isPaused || isError
-                ? `<button class="btn btn-ghost btn-icon" onclick="controlDownload('${item.id}', 'resume')" title="${isError ? 'Coba Lagi (Retry)' : 'Lanjutkan'}">
+                ? `<button class="btn btn-ghost btn-icon" onclick="controlDownload('${item.id}', 'resume')" title="${isError ? 'Coba Lagi (Retry)' : 'Lanjutkan'}" aria-label="${isError ? 'Coba lagi' : 'Lanjutkan'}">
                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                    </button>`
                 : ""
             }
             ${
               isCompleted
-                ? `<button class="btn btn-ghost btn-icon" onclick="openFile('${item.id}')" title="Buka Berkas">
+                ? `<button class="btn btn-ghost btn-icon" onclick="openFile('${item.id}')" title="Buka Berkas" aria-label="Buka berkas">
                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                    </button>`
                 : ""
             }
-            <button class="btn btn-ghost btn-icon" onclick="openFolder('${item.id}')" title="Buka Folder">
+            <button class="btn btn-ghost btn-icon" onclick="openFolder('${item.id}')" title="Buka Folder" aria-label="Buka folder">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
             </button>
-            <button class="btn btn-ghost btn-icon" onclick="deleteDownload('${item.id}')" title="Hapus">
+            <button class="btn btn-ghost btn-icon btn-danger-ghost" onclick="deleteDownload('${item.id}')" title="Hapus" aria-label="Hapus">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
             </button>
           </div>
@@ -279,7 +293,7 @@ function renderDownloads() {
                   </div>
                   <div class="connection-error-actions">
                     <button class="btn btn-primary btn-sm" onclick="controlDownload('${item.id}', 'resume')" title="Coba unduh ulang sekarang">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
                       Coba Lagi (Retry)
                     </button>
                     <button class="btn btn-outline btn-sm" onclick="deleteDownload('${item.id}')" title="Hapus dari antrean">
@@ -319,15 +333,15 @@ function renderDownloads() {
           chunks.forEach(c => {
             const isDone = c.status === "Selesai";
             const isActive = !isDone && c.status && c.status.includes("Menerima");
-            const dotColor = isDone ? "var(--color-primary)" : "var(--color-success)";
+            const dotClass = isDone ? "done" : "live";
             tableRowsHtml += `
               <tr>
-                <td style="font-weight: 600; width: 45px; text-align: center;">${c.num}</td>
-                <td style="font-weight: 500;">${formatBytes(c.downloaded)}</td>
-                <td style="color: var(--color-text-muted);">${formatBytes(c.total)} (${c.percent}%)</td>
+                <td class="num" style="font-weight: 600; width: 45px; text-align: center;">${c.num}</td>
+                <td class="num">${formatBytes(c.downloaded)}</td>
+                <td class="num" style="color: var(--color-text-muted);">${formatBytes(c.total)} (${c.percent}%)</td>
                 <td>
-                  <span class="connection-status-dot ${isActive ? 'active' : ''}" style="background: ${dotColor}; box-shadow: 0 0 6px ${dotColor};"></span>
-                  <span>${c.status}</span>
+                  <span class="connection-status-dot ${dotClass} ${isActive ? 'active' : ''}"></span>
+                  <span>${escapeHtml(c.status)}</span>
                 </td>
               </tr>
             `;
@@ -349,7 +363,7 @@ function renderDownloads() {
               <div class="connection-card">
                 <div class="connection-card-header">
                   <div class="connection-badges">
-                    <span class="badge-connections">⚡ ${numChunks} Koneksi Multi-Segment IDM</span>
+                    <span class="badge-connections">${numChunks} koneksi multi-segmen</span>
                     <span class="badge-resume">Kemampuan resume: ${item.can_resume !== false ? 'Ya' : 'Tidak'}</span>
                   </div>
                   <div class="connection-meta-stats">
@@ -818,13 +832,6 @@ btnRefresh.addEventListener("click", () => {
 });
 searchInput.addEventListener("input", renderDownloads);
 
-window.showErrorModal = function(id) {
-  const item = downloadsData.find(d => d.id === id);
-  if (item && item.error_message) {
-    alert("Detail Error (" + item.title + "):\n\n" + item.error_message);
-  }
-};
-
 async function checkServerStatus() {
   try {
     const res = await fetch("/api/status");
@@ -876,3 +883,29 @@ if (btnShutdown) {
     }
   });
 }
+
+// Tema terang/gelap (disimpan di localStorage bila tersedia)
+(function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem("openidm-theme"); } catch (e) {}
+  if (saved === "light") { document.body.classList.remove("dark"); document.body.classList.add("light"); }
+  const btn = document.getElementById("btn-theme");
+  if (btn) btn.addEventListener("click", () => {
+    const toLight = !document.body.classList.contains("light");
+    document.body.classList.toggle("light", toLight);
+    document.body.classList.toggle("dark", !toLight);
+    try { localStorage.setItem("openidm-theme", toLight ? "light" : "dark"); } catch (e) {}
+  });
+})();
+
+// Esc menutup modal; Enter/Space pada status error membuka detail
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (!addModal.classList.contains("hidden")) hideModal();
+    hideErrorModal();
+  }
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("status-pill") && e.target.getAttribute("role") === "button") {
+    e.preventDefault();
+    e.target.click();
+  }
+});

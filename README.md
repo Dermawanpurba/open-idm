@@ -124,4 +124,14 @@ Anda dapat menjalankan OpenIDM di komputer Windows mana pun **tanpa perlu mengin
 2. Klik 2x file OpenIDM.exe.
 3. Aplikasi akan berjalan di latar belakang (tanpa jendela hitam CMD) dan langsung membuka Dashboard Web di browser default Anda.
 4. Untuk mematikan aplikasi, klik tombol ikon merah di pojok kanan atas Dashboard atau jalankan Hentikan-OpenIDM.bat.
-5. Untuk membangun ulang executable setelah ada perubahan kode, cukup klik 2x uild.bat.
+5. Untuk membangun ulang executable setelah ada perubahan kode, cukup klik 2x build.bat.
+
+#### 💻 Opsi Baris Perintah (CLI Options)
+`ash
+python main.py --help         # Menampilkan bantuan dan seluruh opsi perintah
+python main.py --status       # Memeriksa apakah OpenIDM Core sedang aktif
+python main.py --stop         # Menghentikan server OpenIDM yang sedang berjalan
+python main.py --restart      # Memaksa restart & membersihkan port dari zombie
+python main.py --port 6900    # Menjalankan server pada port kustom
+python main.py --no-browser   # Menjalankan server tanpa otomatis membuka browser
+`

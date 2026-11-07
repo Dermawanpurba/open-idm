@@ -3,7 +3,8 @@ import json
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, Any
+import sys
+from typing import Dict, Any, Optional
 
 from .config import BASE_DIR, SERVER_HOST, SERVER_PORT, get_ffmpeg_path
 from .task_manager import TaskManager
@@ -170,9 +171,61 @@ class OpenIDMRequestHandler(SimpleHTTPRequestHandler):
             traceback.print_exc()
             self._send_json({"success": False, "error": str(e)}, status=500)
 
+def check_existing_instance(host: str = SERVER_HOST, port: int = SERVER_PORT) -> Optional[Dict[str, Any]]:
+    """Check if an OpenIDM server instance is already running on the given host/port."""
+    import urllib.request
+    try:
+        url = f"http://{host}:{port}/api/status"
+        req = urllib.request.Request(url, headers={"User-Agent": "OpenIDM-Probe"})
+        with urllib.request.urlopen(req, timeout=1.2) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("app") == "OpenIDM Core":
+                    return data
+    except Exception:
+        pass
+    return None
+
+def kill_process_on_port(port: int = SERVER_PORT) -> bool:
+    """Free port from hung/zombie process on Windows."""
+    if sys.platform != "win32":
+        return False
+    import subprocess
+    try:
+        out = subprocess.check_output(f'netstat -ano | findstr ":{port}"', shell=True).decode()
+        killed = False
+        my_pid = os.getpid()
+        for line in out.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 5 and "LISTENING" in parts:
+                pid_str = parts[-1]
+                if pid_str.isdigit() and int(pid_str) != my_pid and int(pid_str) != 0:
+                    subprocess.run(f"taskkill /F /PID {pid_str}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    killed = True
+        return killed
+    except Exception:
+        return False
+
 def run_server(host: str = SERVER_HOST, port: int = SERVER_PORT):
-    ThreadingHTTPServer.allow_reuse_address = True
-    server = ThreadingHTTPServer((host, port), OpenIDMRequestHandler)
+    # On Windows, SO_REUSEADDR allows multiple processes to bind to the same port,
+    # causing connection corruption and unexpected drops. Never allow reuse on Windows!
+    ThreadingHTTPServer.allow_reuse_address = (sys.platform != "win32")
+    server = None
+    try:
+        server = ThreadingHTTPServer((host, port), OpenIDMRequestHandler)
+    except OSError as err:
+        # Check if port is locked by a zombie process (e.g. WinError 10048)
+        if getattr(err, "winerror", None) == 10048 or "address already in use" in str(err).lower():
+            print(f"[!] Port {port} sedang digunakan. Membersihkan proses zombie lama...")
+            if kill_process_on_port(port):
+                import time
+                time.sleep(0.8)
+                server = ThreadingHTTPServer((host, port), OpenIDMRequestHandler)
+            else:
+                raise err
+        else:
+            raise err
+
     print(f"[OpenIDM Core] Server aktif di http://{host}:{port}")
     try:
         server.serve_forever()
@@ -183,4 +236,5 @@ def run_server(host: str = SERVER_HOST, port: int = SERVER_PORT):
         print(f"\n[OpenIDM Core] ERROR: {e}")
         traceback.print_exc()
     finally:
-        server.server_close()
+        if server:
+            server.server_close()
