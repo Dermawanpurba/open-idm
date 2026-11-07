@@ -46,6 +46,12 @@ def build_exe():
     print("        OpenIDM - Standalone Portable EXE Builder")
     print("=" * 65)
 
+    # 0. Hentikan OpenIDM.exe jika sedang berjalan agar file tidak terkunci oleh Windows
+    if sys.platform == "win32":
+        subprocess.run("taskkill /F /IM OpenIDM.exe", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import time
+        time.sleep(1.0)
+
     patch_server_shutdown()
 
     # 1. Pastikan icon.ico ada
