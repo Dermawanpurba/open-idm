@@ -366,13 +366,6 @@ class StreamExtractor:
                 "Origin": "https://www.dailymotion.com"
             }
 
-        if any(d in target_url.lower() for d in ["youtube.com", "youtu.be", "youtube-nocookie.com"]):
-            ydl_opts["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "web", "mweb"]
-                }
-            }
-
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=False)
@@ -439,6 +432,16 @@ class StreamExtractor:
                         "has_video": False,
                         "has_audio": True
                     })
+
+                # Sort video qualities descending by resolution height (e.g. 2160p, 1080p, 720p, 480p, 360p)
+                # Keep Audio-Only at the bottom of the list
+                video_qualities = [q for q in qualities if q.get("resolution") != "Audio"]
+                audio_qualities = [q for q in qualities if q.get("resolution") == "Audio"]
+                video_qualities.sort(
+                    key=lambda x: int(x["resolution"].rstrip("p")) if x["resolution"].rstrip("p").isdigit() else -1,
+                    reverse=True
+                )
+                qualities = video_qualities + audio_qualities
 
                 # If no formats found or direct stream
                 if not qualities:
