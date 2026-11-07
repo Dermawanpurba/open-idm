@@ -510,6 +510,13 @@ class DownloadTask:
             ydl_headers["Referer"] = "https://www.dailymotion.com/"
             ydl_headers["Origin"] = "https://www.dailymotion.com"
 
+        if any(d in self.url.lower() for d in ["youtube.com", "youtu.be", "youtube-nocookie.com"]):
+            ydl_opts["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "web", "mweb"]
+                }
+            }
+
         if self.headers and isinstance(self.headers, dict):
             for k, v in self.headers.items():
                 if v:

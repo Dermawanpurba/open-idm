@@ -175,10 +175,10 @@ class StreamExtractor:
         if ok_url_match:
             return f"https://ok.ru/video/{ok_url_match.group(1)}", None
 
-        # 3. Direct YouTube URL
-        yt_direct_match = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url, re.I)
-        if yt_direct_match:
-            return f"https://www.youtube.com/watch?v={yt_direct_match.group(1)}", None
+        # 3. Direct or embedded YouTube URL (converts embeds and nocookie to official watch URL)
+        yt_match = re.search(r'(?:youtube\.com/(?:watch\?v=|embed/|v/|shorts/)|youtube-nocookie\.com/embed/|youtu\.be/)([a-zA-Z0-9_-]{11})', url, re.I)
+        if yt_match:
+            return f"https://www.youtube.com/watch?v={yt_match.group(1)}", None
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -224,8 +224,8 @@ class StreamExtractor:
         if ok_match:
             return f"https://ok.ru/video/{ok_match.group(1)}", page_title
 
-        # Check for YouTube embed
-        yt_match = re.search(r'(?:youtube\.com/embed/|youtu\.be/)([a-zA-Z0-9_-]{11})', html, re.I)
+        # Check for YouTube embed in HTML
+        yt_match = re.search(r'(?:youtube\.com/(?:embed/|v/|shorts/)|youtube-nocookie\.com/embed/|youtu\.be/)([a-zA-Z0-9_-]{11})', html, re.I)
         if yt_match:
             return f"https://www.youtube.com/watch?v={yt_match.group(1)}", page_title
 
@@ -364,6 +364,13 @@ class StreamExtractor:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Referer": "https://www.dailymotion.com/",
                 "Origin": "https://www.dailymotion.com"
+            }
+
+        if any(d in target_url.lower() for d in ["youtube.com", "youtu.be", "youtube-nocookie.com"]):
+            ydl_opts["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "web", "mweb"]
+                }
             }
 
         try:

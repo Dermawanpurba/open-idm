@@ -35,8 +35,12 @@
   function playerUrl(player) {
     if (player.tagName === "IFRAME") {
       const src = player.getAttribute("data-litespeed-src") || player.getAttribute("src") || player.getAttribute("data-src") || "";
+      const yt = src.match(/(?:youtube\.com\/(?:embed\/|v\/|shorts\/)|youtube-nocookie\.com\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+      if (yt) return `https://www.youtube.com/watch?v=${yt[1]}`;
       const dm = src.match(/(?:dailymotion\.com\/(?:embed\/)?video\/|geo\.dailymotion\.com\/player\/[^\s"'<>]+\?video=)([a-zA-Z0-9]+)/i);
       if (dm) return `https://www.dailymotion.com/video/${dm[1]}`;
+      const ok = src.match(/(?:ok\.ru|odnoklassniki\.ru)\/videoembed\/(\d+)/i);
+      if (ok) return `https://ok.ru/video/${ok[1]}`;
       try { return new URL(src, location.href).href; } catch { return location.href; }
     }
     return location.href;

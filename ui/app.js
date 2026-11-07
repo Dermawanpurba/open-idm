@@ -568,13 +568,20 @@ inputUrl.addEventListener("input", () => {
 
 // Fetch Video Info from URL
 btnFetchInfo.addEventListener("click", async () => {
-  const url = inputUrl.value.trim();
+  let url = inputUrl.value.trim();
   if (!url) {
     alert("Masukkan URL terlebih dahulu!");
     return;
   }
 
-  if (url.toLowerCase().includes("vod3.cf.dmcdn.net") || url.toLowerCase().includes("dmcdn.net")) {
+  // Auto-normalize embedded YouTube / nocookie URLs to official watch format
+  const ytEmbed = url.match(/(?:youtube\.com\/(?:embed\/|v\/|shorts\/)|youtube-nocookie\.com\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  if (ytEmbed) {
+    url = `https://www.youtube.com/watch?v=${ytEmbed[1]}`;
+    inputUrl.value = url;
+  }
+
+  if (url.toLowerCase().includes("vod3.cf.dmcdn.net") || url.toLowerCase().includes("dmcdn.net") || ytEmbed) {
     selectCategory.value = "Video";
   }
 
