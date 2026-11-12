@@ -30,6 +30,8 @@ function worker(previous = {}) {
   const calls = { downloads: [], tabsCreate: [], notifications: [], started: [] };
   const table = previous.table || new Map();           // Chrome's download items by id
   const native = { sent: [], ports: [], reply: null, connectFails: false };
+  // Cookie jar seen by chrome.cookies.getAll, keyed by URL prefix.
+  const jar = { cookies: [], fails: false, queries: [] };
   const legacy = { online: false, submitted: [] };
   const timers = [];
   let now = 0;
@@ -62,6 +64,13 @@ function worker(previous = {}) {
     contextMenus: { onClicked: event(), removeAll(fn) { fn(); }, create() {} },
     notifications: { async create(options) { calls.notifications.push(options.message); } },
     alarms: { onAlarm: event(), async create() {} },
+    cookies: {
+      async getAll(query) {
+        jar.queries.push(query);
+        if (jar.fails) throw new Error('cookies unavailable');
+        return jar.cookies.filter(c => query.url.startsWith(c.prefix)).map(({ name, value }) => ({ name, value }));
+      },
+    },
     downloads: {
       onCreated: event(), onDeterminingFilename: event(),
       async download(options) { calls.started.push(options); return 1000 + calls.started.length; },
@@ -111,7 +120,7 @@ function worker(previous = {}) {
     for (const timer of [...timers]) if (!timer.cleared && timer.at <= now) { timer.cleared = true; timer.fn(); }
     await settle();
   };
-  return { chrome, context, send, sniff, startBrowserDownload, advance, settle, calls, native, legacy, table,
+  return { chrome, context, send, sniff, startBrowserDownload, advance, settle, calls, native, legacy, table, jar,
     storage: { local: chrome.storage.local, session: chrome.storage.session } };
 }
 
@@ -339,24 +348,35 @@ test('a rejected "add" is reported, never retried through Chrome', async () => {
   assert.equal(w.calls.started.length, 0);
 });
 
-test('video pages and streams still go to the legacy core over HTTP', async () => {
+test('video pages and streams use native Rust add with the selected quality', async () => {
   const w = worker();
-  w.legacy.online = true;
-  const result = await w.send({ action: 'DOWNLOAD_VIDEO', payload: { url: 'https://www.youtube.com/watch?v=a' } });
-  assert.equal(result.engine, 'core');
-  assert.equal(w.legacy.submitted[0].body.url, 'https://www.youtube.com/watch?v=a');
-  assert.equal(w.native.sent.length, 0);
+  w.native.reply = m => ({ id: m.id, ok: true, task_id: 'video-1' });
+  const result = await w.send({ action: 'DOWNLOAD_VIDEO', payload: { url: 'https://www.youtube.com/watch?v=a', format_id: 'video:720' } });
+  assert.equal(result.engine, 'app');
+  assert.equal(w.native.sent[0].type, 'add');
+  assert.equal(w.native.sent[0].format_id, 'video:720');
+  assert.equal(w.legacy.submitted.length, 0);
 });
 
-test('video pages with the legacy core offline fail with a clear message and download nothing', async () => {
+test('video analysis uses native info and returns real formats without legacy HTTP', async () => {
   const w = worker();
+  w.native.reply = m => ({ id: m.id, ok: true, info: { title: 'Video', formats: [{ format_id: 'video:720' }] } });
+  const result = await w.send({ action: 'FETCH_INFO', url: 'https://www.youtube.com/watch?v=a' });
+  assert.equal(w.native.sent[0].type, 'info');
+  assert.equal(result.info.formats[0].format_id, 'video:720');
+  assert.equal(w.legacy.submitted.length, 0);
+});
+
+test('unavailable app reports video failure without downloading a web page', async () => {
+  const w = worker();
+  w.native.reply = m => ({ id: m.id, ok: false, error: 'app_unavailable' });
   for (const url of ['https://youtube.com/watch?v=a', 'https://cdn.test/a.m3u8', 'https://drive.google.com/drive/folders/a']) {
     const result = await w.send({ action: 'DOWNLOAD_VIDEO', payload: { url } });
     assert.equal(result.success, false);
-    assert.match(result.error, /OpenIDM Legacy/);
+    assert.match(result.error, /OpenIDM/);
   }
   assert.equal(w.calls.started.length, 0);
-  assert.equal(w.native.sent.length, 0);
+  assert.equal(w.legacy.submitted.length, 0);
 });
 
 test('browser mode downloads direct files through Chrome', async () => {
@@ -376,11 +396,11 @@ test('OPEN_DASHBOARD shows the app window instead of opening a tab', async () =>
   assert.equal(w.calls.tabsCreate.length, 0);
 });
 
-test('CHECK_SERVER reports the app and the legacy core separately; a silent app times out', async () => {
+test('CHECK_SERVER reports native video capability; a silent app times out', async () => {
   const w = worker();
-  w.native.reply = m => ({ id: m.id, ok: true, version: '2.0.0' });
+  w.native.reply = m => ({ id: m.id, ok: true, version: '2.0.0', capabilities: ['video'] });
   w.legacy.online = true;
-  assert.deepEqual(JSON.parse(JSON.stringify(await w.send({ action: 'CHECK_SERVER' }))), { online: true, version: '2.0.0', legacy: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(await w.send({ action: 'CHECK_SERVER' }))), { online: true, version: '2.0.0', video: true });
 
   const silent = worker();
   silent.native.reply = () => new Promise(() => {});
@@ -389,7 +409,7 @@ test('CHECK_SERVER reports the app and the legacy core separately; a silent app 
   await silent.advance(10_000);
   const offline = await pending;
   assert.equal(offline.online, false);
-  assert.equal(offline.legacy, false);
+  assert.equal(w.legacy.submitted.length, 0);
 });
 
 test('the native port is closed after an idle period and reopened on demand', async () => {
@@ -401,4 +421,69 @@ test('the native port is closed after an idle period and reopened on demand', as
   assert.equal(w.native.ports[0].disconnected, true);
   await w.send({ action: 'CHECK_SERVER' });
   assert.equal(w.native.ports.length, 2);
+});
+
+// ---- browser session cookies (Google Drive / Takeout) ----
+
+const TAKEOUT = 'https://takeout-download-drive.usercontent.google.com/download/Motorgrader%20Group-001.zip?j=1&i=0&user=2&authuser=0';
+const plain = value => JSON.parse(JSON.stringify(value));
+
+test('capture sends the browser session cookies for the final URL even when webRequest saw none', async () => {
+  const w = worker();
+  w.native.reply = decide('accepted');
+  w.jar.cookies = [
+    { prefix: 'https://takeout-download-drive.usercontent.google.com/', name: 'SID', value: 'abc' },
+    { prefix: 'https://takeout-download-drive.usercontent.google.com/', name: '__Secure-1PSID', value: 'xyz' },
+    { prefix: 'https://other.test/', name: 'NOPE', value: '1' },
+  ];
+  // Chrome reports the redirect target as finalUrl; webRequest recorded nothing (e.g. the worker was asleep).
+  await w.startBrowserDownload({ id: 30, url: 'https://takeout.google.com/takeout/download?j=1', finalUrl: TAKEOUT });
+  const sent = w.native.sent[0];
+  assert.equal(sent.url, TAKEOUT);
+  assert.equal(sent.headers.Cookie, 'SID=abc; __Secure-1PSID=xyz');
+  assert.equal(w.jar.queries[0].url, TAKEOUT);
+});
+
+test('cookies from the cookie store are merged with the headers webRequest recorded', async () => {
+  const w = worker();
+  w.native.reply = decide('accepted');
+  w.jar.cookies = [{ prefix: 'https://files.test/', name: 'session', value: 's1' }];
+  w.sniff(FILE, { headers: [{ name: 'Referer', value: 'https://page.test/' }, { name: 'User-Agent', value: 'UA' }] });
+  await w.settle();
+  await w.startBrowserDownload({ id: 31, url: FILE });
+  assert.deepEqual(plain(w.native.sent[0].headers), { Referer: 'https://page.test/', 'User-Agent': 'UA', Cookie: 'session=s1' });
+});
+
+test('no cookies and a failing cookie store still hand the download over without a Cookie header', async () => {
+  const w = worker();
+  w.native.reply = decide('accepted');
+  await w.startBrowserDownload({ id: 32, url: FILE });
+  assert.equal('Cookie' in w.native.sent[0].headers, false);
+
+  const broken = worker();
+  broken.native.reply = decide('accepted');
+  broken.jar.fails = true;
+  await broken.startBrowserDownload({ id: 33, url: FILE });
+  assert.equal(broken.native.sent[0].type, 'capture');
+  assert.equal('Cookie' in broken.native.sent[0].headers, false);
+  assert.deepEqual(broken.calls.downloads.map(c => c[0]), ['pause', 'cancel', 'erase']);
+});
+
+test('incognito downloads never pick up cookies from the normal profile', async () => {
+  const w = worker();
+  w.native.reply = decide('accepted');
+  w.jar.cookies = [{ prefix: 'https://files.test/', name: 'session', value: 's1' }];
+  await w.startBrowserDownload({ id: 34, url: FILE, incognito: true });
+  assert.equal('Cookie' in (w.native.sent[0]?.headers || {}), false);
+  assert.equal(w.jar.queries.length, 0);
+});
+
+test('a direct file added from the popup carries the session cookies too', async () => {
+  const w = worker();
+  w.native.reply = m => ({ id: m.id, ok: true, task_id: 't1' });
+  w.jar.cookies = [{ prefix: 'https://drive.usercontent.google.com/', name: 'SID', value: 'abc' }];
+  const url = 'https://drive.usercontent.google.com/download?id=FILE123&export=download&authuser=0';
+  const result = await w.send({ action: 'DOWNLOAD_VIDEO', payload: { url, kind: 'direct' } });
+  assert.equal(result.engine, 'app');
+  assert.equal(w.native.sent[0].headers.Cookie, 'SID=abc');
 });

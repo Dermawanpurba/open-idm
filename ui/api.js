@@ -92,7 +92,7 @@
       if (native) {
         return call("get_info", { url }, info => ({
           success: true,
-          info: { title: info.filename, filename: info.filename, category: info.category, formats: [], url, direct: true },
+          info: { ...info, url: info.url || url },
         }));
       }
       return http("/api/info", { url });
@@ -104,6 +104,7 @@
           url: payload.url,
           filename: payload.filename || null,
           category: payload.category || null,
+          formatId: payload.format_id || null,
         }, task => ({ success: true, task }));
       }
       return http("/api/download", { ...payload, category: payload.category || "General" });

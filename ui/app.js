@@ -140,6 +140,7 @@
       if (data && data.success) {
         downloadsData = data.downloads || [];
         renderDownloads();
+        renderSegmentPanel();
         updateBadges();
       }
     } catch (err) {
@@ -303,27 +304,25 @@
               </div>
             </div>
           </td>
-          <td>
+          <td data-label="Ukuran">
             <span class="cell-num">${item.filesize > 0 ? formatBytes(item.filesize) : "-"}</span>
           </td>
-          <td>
+          <td data-label="Progress">
             <div class="progress-col">
-              <div class="progress-track">
-                <div class="progress-fill ${progressClass}" style="width: ${progressPercent}%;"></div>
-              </div>
+              ${renderProgressTrack(item, progressClass, progressPercent)}
               <span class="progress-text">${progressPercent}%</span>
             </div>
           </td>
-          <td>
+          <td data-label="Kecepatan">
             <span class="cell-num">${isDownloading ? formatSpeed(item.speed) : "-"}</span>
           </td>
-          <td>
+          <td data-label="Sisa Waktu">
             <span class="cell-num">${isDownloading ? formatEta(item.eta) : "-"}</span>
           </td>
-          <td>
+          <td data-label="Status">
             ${statusBadgeHtml}
           </td>
-          <td style="text-align: right; padding-right: 18px;">
+          <td class="column-actions">
             ${rowActionsHtml}
           </td>
         </tr>`;
@@ -452,6 +451,82 @@
     if (errorModal) errorModal.classList.add("hidden");
   };
 
+  // ---- Multi-connection segments (IDM-style bar and connection panel) ----
+  const segmentModal = document.getElementById("segment-modal");
+  const segmentTitle = document.getElementById("segment-modal-file");
+  const segmentSummary = document.getElementById("segment-summary");
+  const segmentBar = document.getElementById("segment-bar");
+  const segmentList = document.getElementById("segment-list");
+  const segmentEmpty = document.getElementById("segment-empty");
+  let segmentTaskId = null;
+  const segmentStates = { active: "Mengunduh", done: "Selesai", waiting: "Menunggu" };
+
+  function blocksHtml(item, extraClass) {
+    return OpenIDMSegments.blocks(item).map(block =>
+      `<span class="seg-block ${extraClass} ${block.active ? "is-active" : ""}" style="left:${block.left}%;width:${block.width}%"></span>`
+    ).join("");
+  }
+
+  function renderProgressTrack(item, progressClass, progressPercent) {
+    const blocks = OpenIDMSegments.blocks(item);
+    if (!blocks.length || item.status === "completed") {
+      return `<div class="progress-track"><div class="progress-fill ${progressClass}" style="width: ${progressPercent}%;"></div></div>`;
+    }
+    const info = OpenIDMSegments.summary(item);
+    const label = info.active > 0 ? `${info.active} koneksi aktif, ${info.segments} segmen` : `${info.segments} segmen`;
+    return `<button type="button" class="progress-track segmented" data-act="segments" data-id="${escapeHtml(item.id)}"
+              title="${label}. Klik untuk detail koneksi." aria-label="${label}. Lihat detail koneksi.">
+              ${blocksHtml(item, progressClass)}
+            </button>`;
+  }
+
+  function renderSegmentPanel() {
+    if (!segmentModal || !segmentTaskId) return;
+    const item = downloadsData.find(d => d.id === segmentTaskId);
+    if (!item) { window.hideSegmentModal(); return; }
+    segmentTitle.textContent = item.title || item.filename || "";
+    const rows = OpenIDMSegments.rows(item);
+    const info = OpenIDMSegments.summary(item);
+    segmentEmpty.classList.toggle("hidden", rows.length > 0);
+    segmentBar.parentElement.classList.toggle("hidden", rows.length === 0);
+    segmentSummary.textContent = rows.length
+      ? `${info.active} koneksi aktif dari ${info.segments} segmen · ${formatSpeed(info.speed)}`
+      : "Unduhan ini memakai satu koneksi.";
+    segmentBar.innerHTML = blocksHtml(item, item.status === "downloading" ? "downloading" : item.status);
+    segmentList.innerHTML = rows.map(row => `
+      <tr class="seg-row ${row.state}">
+        <td class="cell-num">${row.number}</td>
+        <td class="cell-num">${formatBytes(row.start)} - ${formatBytes(row.end + 1)}</td>
+        <td>
+          <div class="seg-progress">
+            <div class="progress-track"><div class="progress-fill ${row.state === "done" ? "completed" : "downloading"}" style="width:${row.percent}%"></div></div>
+            <span class="cell-num">${formatBytes(row.done)} / ${formatBytes(row.size)}</span>
+          </div>
+        </td>
+        <td class="cell-num">${row.state === "active" ? formatSpeed(row.speed) : "-"}</td>
+        <td><span class="seg-state ${row.state}">${segmentStates[row.state]}</span></td>
+      </tr>`).join("");
+  }
+
+  window.showSegmentModal = function (id) {
+    segmentTaskId = id;
+    renderSegmentPanel();
+    if (segmentModal) segmentModal.classList.remove("hidden");
+    const close = document.getElementById("btn-close-segments");
+    if (close) close.focus();
+  };
+
+  window.hideSegmentModal = function () {
+    segmentTaskId = null;
+    if (segmentModal) segmentModal.classList.add("hidden");
+  };
+
+  document.querySelectorAll("[data-close-segments]").forEach(el => el.addEventListener("click", () => window.hideSegmentModal()));
+  if (segmentModal) {
+    segmentModal.addEventListener("keydown", e => { if (e.key === "Escape") window.hideSegmentModal(); });
+    segmentModal.addEventListener("click", e => { if (e.target === segmentModal) window.hideSegmentModal(); });
+  }
+
   // Row actions (delegated: the app's CSP forbids inline handlers)
   const rowActions = {
     "error": id => window.showErrorModal(id),
@@ -460,6 +535,7 @@
     "pause": id => window.controlDownload(id, "pause"),
     "resume": id => window.controlDownload(id, "resume"),
     "delete": id => window.deleteDownload(id),
+    "segments": id => window.showSegmentModal(id),
   };
   if (downloadsList) {
     downloadsList.addEventListener("click", (e) => {
@@ -607,6 +683,11 @@
   if (btnCancelModal) btnCancelModal.addEventListener("click", hideModal);
 
   // URL Analysis
+  if (inputUrl) inputUrl.addEventListener("input", () => {
+    selectedVideoInfo = null;
+    if (videoPreviewCard) videoPreviewCard.classList.add("hidden");
+    if (selectFormat) selectFormat.innerHTML = '<option value="best">Kualitas Terbaik (Otomatis)</option>';
+  });
   if (btnFetchInfo && inputUrl) {
     btnFetchInfo.addEventListener("click", async () => {
       const url = inputUrl.value.trim();
@@ -617,9 +698,11 @@
 
       btnFetchInfo.disabled = true;
       btnFetchInfo.textContent = "Menganalisis...";
+      if (btnStartDownload) btnStartDownload.disabled = true;
 
       try {
         const data = await OpenIDMApi.info(url);
+        if (inputUrl.value.trim() !== url) return;
         if (!data.success || !data.info) {
           alert(data.error || "Tautan tidak bisa dianalisis.");
           return;
@@ -688,6 +771,7 @@
       } finally {
         btnFetchInfo.disabled = false;
         btnFetchInfo.textContent = "Analisis URL";
+        if (btnStartDownload) btnStartDownload.disabled = false;
       }
     });
   }

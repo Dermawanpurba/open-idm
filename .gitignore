@@ -3,6 +3,7 @@
 /dist/
 /target/
 /.superpowers/
+/.backups/
 __pycache__/
 *.pyc
 *.db

@@ -1,7 +1,5 @@
-/* OpenIDM MV3 worker. Downloads outlive this worker.
-   Files go to the OpenIDM app over Native Messaging; video pages and streams still use the legacy core over HTTP. */
+/* OpenIDM MV3 worker. Files and video requests use the Rust app over Native Messaging. */
 importScripts("shared.js", "native.js");
-const API = "http://127.0.0.1:6899/api";
 const { httpUrl, mediaKind, isDirect, safeFilename, corePage, defaults } = OpenIDM;
 const requestHeaders = new Map();
 const browserStartedUrls = new Set();
@@ -39,36 +37,13 @@ async function settings() {
   const { settings: saved } = await chrome.storage.local.get("settings");
   return { ...defaults, ...saved };
 }
-async function api(path, body, timeout = 25000) {
-  const response = await fetch(`${API}${path}`, {
-    method: body ? "POST" : "GET",
-    headers: body ? { "Content-Type": "application/json" } : {},
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(timeout)
-  });
-  const data = await response.json();
-  if (!response.ok || data.success === false || data.error) {
-    const error = new Error(data.error || `OpenIDM merespons HTTP ${response.status}.`);
-    error.rejected = true;
-    throw error;
-  }
-  return data;
-}
-/** The legacy Python core (video pages, streams, Drive folders). */
-async function legacyStatus() {
-  try {
-    const data = await api("/status", null, 1800);
-    return { online: data.app === "OpenIDM Core" && data.status === "online", data };
-  } catch { return { online: false }; }
-}
 /** The desktop app. Asking starts it when it is not running. */
 async function appStatus() {
   try {
     const reply = await OpenIDMNative.request({ type: "ping" }, { timeout: 8000 });
-    return { online: true, version: reply.version };
+    return { online: true, version: reply.version, video: (reply.capabilities || []).includes("video") };
   } catch { return { online: false }; }
 }
-const legacyOffline = "Video dan folder Google Drive masih memakai OpenIDM Legacy. Jalankan legacy\\OpenIDM.exe, lalu coba lagi.";
 async function browserDownload(payload, options) {
   const filename = safeFilename(payload.filename);
   browserStartedUrls.add(payload.url);
@@ -85,6 +60,20 @@ async function browserDownload(payload, options) {
   });
   return { success: true, engine: "browser", downloadId: id };
 }
+/**
+ * Adds the browser's session cookies for `url` to `headers`.
+ * webRequest does not reliably expose the Cookie header (and its record is lost when the worker sleeps),
+ * yet sites such as Google Drive and Takeout answer cookieless requests with a login page.
+ */
+async function withSessionCookies(url, headers, incognito = false) {
+  // The default cookie store is the normal profile; never send it for a private-window download.
+  if (incognito) return headers;
+  try {
+    const cookies = await chrome.cookies.getAll({ url });
+    if (cookies.length) headers.Cookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+  } catch { /* Without cookies the app still tries; a refusal hands the download back to the browser. */ }
+  return headers;
+}
 async function download(payload, tabId, sender = {}) {
   const url = httpUrl(payload.url);
   if (!url) throw new Error("Masukkan tautan HTTP atau HTTPS yang valid.");
@@ -100,29 +89,20 @@ async function download(payload, tabId, sender = {}) {
   // Headers belong to this exact resource, never an unrelated request in its tab.
   const headers = { ...(match?.headers || {}) };
   if (!headers.Referer && httpUrl(sender.tab?.url)) headers.Referer = sender.tab.url;
-  if (direct) {
+  if (direct) await withSessionCookies(url, headers, Boolean(sender.tab?.incognito));
+  {
     try {
       const reply = await OpenIDMNative.request({ type: "add", url, filename: safeFilename(payload.filename) || undefined,
-        filesize: Math.max(0, Number(payload.filesize) || 0), headers });
+        filesize: Math.max(0, Number(payload.filesize) || 0), headers,
+        format_id: direct ? "direct" : String(payload.format_id || "best") });
       return { success: true, engine: "app", task_id: reply.task_id };
     } catch (error) {
       // A refusal is final: retrying through Chrome could fetch something the app rejected for a reason.
       if (error.code !== "app_unavailable") throw error;
-      if (mode === "auto") return browserDownload({ ...payload, url }, options);
+      if (mode === "auto" && direct) return browserDownload({ ...payload, url }, options);
       throw new Error("OpenIDM tidak bisa dibuka. Buka OpenIDM sekali, lalu coba lagi.");
     }
   }
-  if (!(await legacyStatus()).online) throw new Error(legacyOffline);
-  const body = {
-    url, title: String(payload.title || "").slice(0, 300) || undefined,
-    filename: safeFilename(payload.filename) || undefined,
-    format_id: String(payload.format_id || (direct ? "direct" : "best")),
-    category: ["Video", "Music", "Documents", "Programs", "Compressed", "General"].includes(payload.category) ? payload.category : "General",
-    filesize: Math.max(0, Number(payload.filesize) || 0), headers,
-    ...(isUI(sender) && payload.request_id ? { request_id: payload.request_id } : {})
-  };
-  // A slow core may already have queued it: never retry via Chrome after submission.
-  return { ...await api("/download", body), engine: "core" };
 }
 chrome.webRequest.onBeforeSendHeaders.addListener(details => {
   if (details.tabId < 0) return;
@@ -175,8 +155,7 @@ async function handle(request, sender) {
       return { media: media.filter(item => isUI(sender) || item.frameId === sender.frameId).map(({ headers, ...item }) => item) };
     }
     case "CHECK_SERVER": {
-      const [app, legacy] = await Promise.all([appStatus(), legacyStatus()]);
-      return { ...app, legacy: legacy.online };
+      return appStatus();
     }
     case "GET_SETTINGS": return { settings: await settings() };
     case "SAVE_SETTINGS": {
@@ -191,7 +170,8 @@ async function handle(request, sender) {
     case "FETCH_INFO": {
       const url = httpUrl(request.url);
       if (!url) throw new Error("Tautan tidak valid.");
-      return api("/info", { url });
+      const reply = await OpenIDMNative.request({ type: "info", url });
+      return { success: true, info: reply.info };
     }
     case "OPEN_DASHBOARD": {
       const url = httpUrl(request.url);

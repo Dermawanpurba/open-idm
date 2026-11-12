@@ -228,6 +228,39 @@ async fn category_override_is_honoured_only_when_known() {
 }
 
 #[tokio::test]
+async fn segments_are_reported_while_running_and_after_a_pause() {
+    let s = serve(body(8 * MB), slow()).await;
+    let (_d, m) = setup();
+    let t = m.add(NewTask { url: format!("{}/big.bin", s.url), ..nt() }).unwrap();
+    wait_until("several segments are active", || {
+        m.get(&t.id).map(|r| r.segments.iter().filter(|s| s.active).count() >= 2).unwrap_or(false)
+    })
+    .await;
+    let running = m.get(&t.id).unwrap();
+    assert_eq!(running.segments.first().unwrap().start, 0);
+    assert_eq!(running.segments.last().unwrap().end, 8 * MB as u64 - 1);
+    let json = serde_json::to_value(&running).unwrap();
+    assert!(json["segments"][0]["speed"].is_number(), "segments reach the UI: {json}");
+
+    assert!(m.pause(&t.id));
+    wait_status(&m, &t.id, "paused").await;
+    let paused = m.get(&t.id).unwrap();
+    assert!(!paused.segments.is_empty(), "a paused download still shows its segments");
+    assert!(paused.segments.iter().all(|s| !s.active && s.speed == 0.0));
+    assert_eq!(paused.segments.iter().map(|s| s.done).sum::<u64>(), paused.downloaded_bytes);
+}
+
+#[tokio::test]
+async fn finished_and_single_stream_rows_have_no_segments() {
+    let s = serve(body(1000), ok()).await;
+    let (_d, m) = setup();
+    let t = m.add(NewTask { url: s.url.clone(), ..nt() }).unwrap();
+    wait_status(&m, &t.id, "completed").await;
+    assert!(m.get(&t.id).unwrap().segments.is_empty());
+    assert!(serde_json::to_value(m.get(&t.id).unwrap()).unwrap().get("segments").is_none());
+}
+
+#[tokio::test]
 async fn download_dir_unavailable() {
     let s = serve(body(10), ok()).await;
     let (d, m) = setup();

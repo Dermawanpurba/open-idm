@@ -113,7 +113,11 @@ input, button, select, textarea {
   border-bottom: 1px solid var(--c-border);
   flex-shrink: 0;
   -webkit-app-region: drag; /* Allows moving window if supported */
+  gap: 20px;
 }
+
+.header-left, .header-right { flex-shrink: 0; }
+.header-center { flex: 1; min-width: 0; justify-content: center; }
 
 .header-left, .header-center, .header-right {
   display: flex;
@@ -184,7 +188,9 @@ input, button, select, textarea {
 /* Search Box */
 .search-container {
   position: relative;
-  width: 380px;
+  width: 100%;
+  max-width: 380px;
+  min-width: 0;
   display: flex;
   align-items: center;
 }
@@ -198,7 +204,7 @@ input, button, select, textarea {
   pointer-events: none;
 }
 
-.search-container input {
+.search-container input[type="text"] {
   width: 100%;
   height: 38px;
   background: rgba(255, 255, 255, 0.04);
@@ -303,11 +309,14 @@ input, button, select, textarea {
    Action Toolbar
    ========================================================================== */
 .action-toolbar {
-  height: 56px;
+  min-height: 56px;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 18px;
+  padding: 10px 18px;
+  gap: 12px;
+  flex-wrap: wrap;
   background: rgba(14, 23, 38, 0.6);
   border-bottom: 1px solid var(--c-border);
   flex-shrink: 0;
@@ -317,7 +326,11 @@ input, button, select, textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
+
+.toolbar-right { margin-left: auto; }
+.toolbar-left > .btn, .toolbar-right > .btn { flex-shrink: 0; }
 
 /* Buttons */
 .btn {
@@ -438,6 +451,7 @@ input, button, select, textarea {
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* Left Sidebar */
@@ -452,6 +466,7 @@ input, button, select, textarea {
 
 .sidebar-scrollable {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px 12px;
   display: flex;
@@ -479,6 +494,7 @@ input, button, select, textarea {
 }
 
 .nav-item-icon {
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   display: flex;
@@ -495,12 +511,13 @@ input, button, select, textarea {
 
 .nav-item-label {
   flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .nav-badge {
+  flex-shrink: 0;
+  margin-left: 8px;
   font-size: 11px;
   font-weight: 600;
   font-family: var(--font-mono);
@@ -573,6 +590,8 @@ input, button, select, textarea {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
 }
 
 .storage-title {
@@ -624,6 +643,8 @@ input, button, select, textarea {
    ========================================================================== */
 .main-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
   display: flex;
@@ -641,13 +662,23 @@ input, button, select, textarea {
   display: flex;
   flex-direction: column;
   min-height: 250px;
+  flex-shrink: 0;
 }
 
 .downloads-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   text-align: left;
 }
+
+.column-select { width: 44px; text-align: center; }
+.column-size { width: 88px; }
+.column-progress { width: 136px; }
+.column-speed { width: 100px; }
+.column-eta { width: 86px; }
+.column-status { width: 126px; }
+.downloads-table .column-actions { width: 128px; text-align: right; padding-right: 18px; }
 
 .downloads-table thead {
   background: rgba(17, 28, 46, 0.8);
@@ -720,6 +751,7 @@ input, button, select, textarea {
 
 /* File Info Cell */
 .file-cell {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -765,10 +797,9 @@ input, button, select, textarea {
 .file-title {
   font-weight: 600;
   color: var(--c-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
   font-size: 13.5px;
 }
 
@@ -1026,6 +1057,7 @@ input, button, select, textarea {
 .modal-card {
   width: 100%;
   max-width: 540px;
+  max-height: calc(100vh - 40px);
   background: #0E1726;
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -1036,6 +1068,7 @@ input, button, select, textarea {
 }
 
 .modal-header {
+  flex-shrink: 0;
   padding: 16px 20px;
   display: flex;
   align-items: center;
@@ -1079,6 +1112,7 @@ input, button, select, textarea {
 }
 
 .modal-body {
+  min-height: 0;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -1086,6 +1120,8 @@ input, button, select, textarea {
   max-height: 70vh;
   overflow-y: auto;
 }
+
+.modal-body > * { flex-shrink: 0; }
 
 .form-group {
   display: flex;
@@ -1106,6 +1142,7 @@ input, button, select, textarea {
 
 .input-with-button input {
   flex: 1;
+  min-width: 0;
 }
 
 input[type="text"], select {
@@ -1131,6 +1168,7 @@ select option {
 }
 
 .modal-footer {
+  flex-shrink: 0;
   padding: 14px 20px;
   display: flex;
   align-items: center;
@@ -1158,6 +1196,7 @@ select option {
 }
 
 .preview-meta h4 {
+  overflow-wrap: anywhere;
   font-size: 13.5px;
   font-weight: 600;
   color: #FFFFFF;
@@ -1254,6 +1293,73 @@ select option {
   max-height: 180px;
   overflow-y: auto;
   white-space: pre-wrap;
+}
+
+/* A restored desktop window keeps every field and action in the viewport. */
+@media (max-width: 1240px) {
+  .downloads-table,
+  .downloads-table thead,
+  .downloads-table tbody { display: block; }
+
+  .downloads-table tr {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 122px;
+    gap: 12px;
+    padding: 14px;
+    align-items: start;
+  }
+
+  .downloads-table thead tr { align-items: center; }
+  .downloads-table th,
+  .downloads-table td,
+  .downloads-table .column-actions { width: auto; min-width: 0; padding: 0; }
+
+  .downloads-table th:first-child { grid-column: 1; }
+  .downloads-table th:nth-child(2) { grid-column: 2 / 4; }
+  .downloads-table th:last-child { grid-column: 4; padding-right: 6px; }
+  .downloads-table th:nth-child(n+3):nth-child(-n+7) { display: none; }
+
+  .downloads-table tbody tr {
+    grid-template-areas:
+      "select file file actions"
+      ". size speed status"
+      ". progress progress eta";
+    row-gap: 14px;
+  }
+
+  .downloads-table td:first-child { grid-area: select; padding-top: 6px; }
+  .downloads-table td:nth-child(2) { grid-area: file; }
+  .downloads-table td:nth-child(3) { grid-area: size; }
+  .downloads-table td:nth-child(4) { grid-area: progress; }
+  .downloads-table td:nth-child(5) { grid-area: speed; }
+  .downloads-table td:nth-child(6) { grid-area: eta; }
+  .downloads-table td:nth-child(7) { grid-area: status; }
+  .downloads-table td:last-child { grid-area: actions; }
+
+  .downloads-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 5px;
+    color: var(--c-text-secondary);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  .file-cell { align-items: flex-start; }
+  .file-thumb-wrap { margin-top: 3px; }
+  .status-pill { max-width: 100%; }
+}
+
+@media (max-width: 1000px) {
+  .app-header { gap: 16px; }
+  .toolbar-left, .toolbar-right { gap: 6px; }
+  .action-toolbar .btn:not(.btn-icon-only) { padding-inline: 10px; }
+  .sidebar { width: 214px; }
+  .nav-item { padding-inline: 10px; }
+  .main-content { padding: 14px; }
+  .app-statusbar { gap: 12px; }
+  .statusbar-left, .statusbar-right { gap: 12px; }
 }
 
 /* ---- Settings dialog & shared control states (desktop app) ---- */
@@ -1472,4 +1578,172 @@ select option {
 
 .confirm-actions .btn {
   min-height: 38px;
+}
+
+/* ---- Multi-connection segments (IDM-style) ---- */
+.progress-track.segmented {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.progress-track.segmented {
+  flex: 1;
+  height: 9px;
+}
+
+.progress-track.segmented:hover {
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+}
+
+.progress-track.segmented:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 3px;
+}
+
+.progress-track.segmented.large {
+  height: 14px;
+  cursor: default;
+  border-radius: var(--r-sm);
+}
+
+.seg-block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--c-success);
+  border-right: 1px solid rgba(9, 13, 22, 0.85);
+  transition: width 0.25s ease;
+}
+
+.seg-block.paused { background: var(--c-warning); }
+.seg-block.error { background: var(--c-danger); }
+.seg-block.downloading { background: #10B981; }
+.seg-block.downloading.is-active { background: #34D399; }
+
+.segment-card {
+  max-width: 720px;
+}
+
+.segment-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.segment-file {
+  font-size: 12px;
+  color: var(--c-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 520px;
+}
+
+.segment-summary {
+  font-size: 13px;
+  color: var(--c-text-primary);
+}
+
+.segment-map {
+  padding: 12px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--c-surface-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.segment-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--c-surface-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.segment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.segment-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 12px;
+  background: var(--c-surface-elevated);
+  border-bottom: 1px solid var(--c-border);
+  color: var(--c-text-muted);
+  font-weight: 500;
+  text-align: left;
+}
+
+.segment-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--c-text-secondary);
+  vertical-align: middle;
+}
+
+.seg-row.active td {
+  color: var(--c-text-primary);
+}
+
+.seg-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.seg-progress .progress-track {
+  height: 6px;
+}
+
+.seg-state {
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--c-border);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.seg-state.active {
+  color: var(--c-success);
+  background: var(--c-success-bg);
+  border-color: var(--c-success-border);
+}
+
+.seg-state.done {
+  color: var(--c-text-secondary);
+}
+
+.seg-state.waiting {
+  color: var(--c-warning);
+  background: var(--c-warning-bg);
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.segment-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--c-text-secondary);
+  font-size: 13px;
+}
+
+.segment-empty svg {
+  width: 28px;
+  height: 28px;
+  color: var(--c-text-muted);
 }

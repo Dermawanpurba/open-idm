@@ -50,6 +50,7 @@
     const source = player.currentSrc || player.src || "";
     const cacheKey = `${url}|${source}`;
     container.textContent = "Menganalisis video di OpenIDM Desktop…";
+    let analysisError = "";
     try {
       let info = cache.get(cacheKey);
       if (!info) {
@@ -62,7 +63,7 @@
       }
       if (playerUrl(player) !== url || (player.currentSrc || player.src || "") !== source) return;
       if (info?.formats?.length) { render(container, info); return; }
-    } catch { /* Direct files can still be downloaded without the companion. */ }
+    } catch (error) { analysisError = error.message; }
     try {
       const { media } = await send({ action: "GET_TAB_MEDIA" });
       // Never use another player's stream as an implicit fallback.
@@ -75,7 +76,7 @@
         return;
       }
     } catch { /* Show actionable recovery below. */ }
-    container.textContent = "Jalankan OpenIDM.exe untuk pilihan kualitas. Putar video atau buka popup ekstensi untuk memilih media terdeteksi.";
+    container.textContent = analysisError || "Video belum terdeteksi. Putar video lalu coba analisis lagi.";
     const retry = document.createElement("button");
     retry.className = "openidm-retry-btn";
     retry.textContent = "Coba lagi";

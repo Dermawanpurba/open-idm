@@ -24,6 +24,8 @@ const SPEED_WINDOW: Duration = Duration::from_secs(5);
 pub struct NewTask {
     pub url: String,
     pub filename: Option<String>,
+    /// "direct" or a validated video selector (best, video:720, audio).
+    pub format_id: Option<String>,
     /// Folder category chosen by the user; unknown values fall back to the file type.
     pub category: Option<String>,
     pub filesize: u64,
@@ -119,6 +121,10 @@ impl Manager {
         lock(&self.settings).clone()
     }
 
+    pub async fn video_info(&self, url: &str) -> Result<crate::video::VideoInfo, String> {
+        crate::video::Tools::at(&self.data_dir).info(url).await
+    }
+
     pub fn update_settings(self: &Arc<Self>, settings: Settings) -> Result<Settings, String> {
         let settings = settings.validated()?;
         settings.save(&self.data_dir).map_err(|_| "Pengaturan tidak bisa disimpan.".to_string())?;
@@ -129,6 +135,10 @@ impl Manager {
 
     pub fn add(self: &Arc<Self>, task: NewTask) -> Result<TaskRow, String> {
         let url = http_url(&task.url).ok_or("Tautan tidak valid.")?;
+        let format_id = task.format_id.unwrap_or_else(|| {
+            if crate::video::needs_extractor(url.as_str()) { "best" } else { "direct" }.into()
+        });
+        if format_id != "direct" { crate::video::selector(&format_id)?; }
         let filename = resolve_filename(task.filename.as_deref(), None, &url);
         let category = valid_category(task.category.as_deref()).unwrap_or_else(|| category_for(&filename));
         let root = self.settings().download_dir;
@@ -156,13 +166,14 @@ impl Manager {
             status: if task.start_paused { "paused" } else { "pending" }.into(),
             category: category.into(),
             thumbnail: String::new(),
-            format_id: "direct".into(),
+            format_id,
             error_message: String::new(),
             request_id: task.request_id.unwrap_or_default(),
             created_at: now(),
             completed_at: None,
             headers: filter_headers(&task.headers),
             can_resume: true,
+            segments: Vec::new(),
         };
         self.db.insert(&row).map_err(|_| "Unduhan tidak bisa disimpan.".to_string())?;
         lock(&self.first).insert(row.id.clone(), Arc::new(watch::channel(First::Waiting).0));
@@ -235,6 +246,7 @@ impl Manager {
     fn remove_task(&self, row: &TaskRow, delete_file: bool) {
         let path = Path::new(&row.filepath);
         remove_partials(path);
+        if row.format_id != "direct" { crate::video::remove_partials(path, &row.id); }
         if delete_file {
             let _ = std::fs::remove_file(path);
         }
@@ -283,6 +295,9 @@ impl Manager {
             row.speed = f64::from_bits(active.speed.load(Ordering::Relaxed));
             row.eta = eta(row.filesize, row.downloaded_bytes, row.speed);
             row.status = "downloading".into();
+            row.segments = active.progress.segments();
+        } else if matches!(row.status.as_str(), "paused" | "error" | "pending") && row.format_id == "direct" {
+            row.segments = engine::saved_segments(&part_of(Path::new(&row.filepath)));
         }
         row
     }
@@ -362,7 +377,13 @@ impl Manager {
         let mut ticker = tokio::time::interval(Duration::from_secs(1));
 
         let result = {
-            let download = engine::run(&self.client, &job, &cfg, &run.progress, run.stop.clone(), Some(first_tx));
+            let tools = crate::video::Tools::at(&self.data_dir);
+            let download: std::pin::Pin<Box<dyn std::future::Future<Output = Result<Outcome, engine::EngineError>> + Send + '_>> =
+                if row.format_id != "direct" && !row.format_id.is_empty() {
+                    Box::pin(tools.download(&job, &row.format_id, cfg.segments, &run.progress, run.stop.clone(), Some(first_tx)))
+                } else {
+                    Box::pin(engine::run(&self.client, &job, &cfg, &run.progress, run.stop.clone(), Some(first_tx)))
+                };
             tokio::pin!(download);
             loop {
                 tokio::select! {

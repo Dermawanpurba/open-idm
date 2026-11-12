@@ -39,6 +39,9 @@ pub struct TaskRow {
     pub headers: BTreeMap<String, String>,
     /// Not stored; true unless the manager knows the server cannot resume.
     pub can_resume: bool,
+    /// Not stored; ranges of a multi-connection download, filled in by the manager.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<crate::engine::SegmentView>,
 }
 
 const COLUMNS: &str = "id, url, title, filename, filepath, filesize, downloaded_bytes, progress, speed, eta, \
@@ -90,6 +93,7 @@ fn from_row(row: &Row) -> rusqlite::Result<TaskRow> {
         },
         headers: serde_json::from_str(&text(18)?).unwrap_or_default(),
         can_resume: true,
+            segments: Vec::new(),
     })
 }
 
@@ -260,6 +264,7 @@ mod tests {
             completed_at: None,
             headers: [("Cookie", "c"), ("Referer", "r")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             can_resume: true,
+            segments: Vec::new(),
         }
     }
 

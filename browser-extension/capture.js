@@ -47,6 +47,7 @@ async function captureDownload(item) {
     const filename = safeFilename(item.filename) || resource?.filename || safeFilename(new URL(url).pathname.split("/").pop()) || "download";
     const headers = { ...(resource?.headers || {}) };
     if (!headers.Referer && httpUrl(item.referrer)) headers.Referer = item.referrer;
+    await withSessionCookies(url, headers, Boolean(item.incognito));
     // No timeout: the app's confirmation dialog stays open for as long as the user needs.
     const reply = await OpenIDMNative.request({ type: "capture", url, filename,
       filesize: Math.max(0, item.totalBytes || 0), headers, referrer: httpUrl(item.referrer) || undefined });

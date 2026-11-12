@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OpenIDM — Download Manager",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwGzFapIKEhdcjSzCLPqGozolZeWcj1blg2dgkBiB7FRHxif6Ci5c4s2EEbu/yUiAHzpNq2n6B7/vEHYr2cwb/OyfesuCil/ppAfL8vfiRJAPfzW0CmxdBR369A/gvtPZlmQAs867N2Th/sB6rc9iUQ3PagNz6+RlordR4tx2IZxo37ifhZXsHnmnm47YOoRhprLDqslHeRbxp/ybpYLWeZFcFgJQnTSFuigNiMBLtT6JWlAdXDPp/hKimyw4QSqHb246ic5qYJzQ8yUJkpUdc96pK/YkgV31CKoJ2s0mhAQyx3VI43/iPJNOABk23myb6xMr5a4WjQcw0lLuG/irwwIDAQAB",
   "minimum_chrome_version": "109",
   "description": "Kirim unduhan dari website ke aplikasi OpenIDM, deteksi media, dan unduh video streaming.",

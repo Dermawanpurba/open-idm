@@ -7,6 +7,7 @@ pub mod naming;
 pub mod settings;
 pub mod protocol;
 pub mod winutil;
+pub mod video;
 
 #[cfg(test)]
 mod tests {

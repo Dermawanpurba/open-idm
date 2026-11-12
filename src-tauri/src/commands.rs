@@ -16,8 +16,7 @@ use tauri_plugin_dialog::DialogExt;
 
 type Mgr<'a> = State<'a, Arc<Manager>>;
 
-const LEGACY_ONLY: &str = "Analisis video dan folder Google Drive belum tersedia di aplikasi ini. \
-                           Gunakan OpenIDM Legacy untuk sementara.";
+const LEGACY_ONLY: &str = "Tautan halaman ini perlu dianalisis sebagai video. Untuk folder Google Drive, gunakan tautan berkas langsung.";
 
 /// Sites whose pages need the extractor (stage 2/3), not a plain file download.
 const CORE_HOSTS: [&str; 11] = [
@@ -101,7 +100,20 @@ pub fn list_downloads(m: Mgr, category: Option<String>, status: Option<String>) 
 }
 
 #[tauri::command]
-pub fn add_download(m: Mgr, url: String, filename: Option<String>, category: Option<String>) -> Result<TaskRow, String> {
+pub async fn add_download(m: Mgr<'_>, url: String, filename: Option<String>, category: Option<String>, format_id: Option<String>) -> Result<TaskRow, String> {
+    if openidm_core::video::needs_extractor(&url) {
+        let format = format_id.filter(|f| f != "direct").unwrap_or_else(|| "best".into());
+        openidm_core::video::selector(&format)?;
+        let mut filename = match filename {
+            Some(name) => name,
+            None => m.video_info(&url).await?.filename,
+        };
+        let mut path = PathBuf::from(&filename);
+        path.set_extension(if format == "audio" { "m4a" } else { "mp4" });
+        filename = path.to_string_lossy().into_owned();
+        let category = category.filter(|c| c != "General").unwrap_or_else(|| if format == "audio" { "Music" } else { "Video" }.into());
+        return m.add(NewTask { url, filename: Some(filename), category: Some(category), format_id: Some(format), ..Default::default() });
+    }
     classify_info(&url)?;
     m.add(NewTask { url, filename, category, ..Default::default() })
 }
@@ -154,8 +166,12 @@ pub fn open_download_dir(m: Mgr) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn get_info(url: String) -> Result<DirectInfo, String> {
-    classify_info(&url)
+pub async fn get_info(m: Mgr<'_>, url: String) -> Result<serde_json::Value, String> {
+    if openidm_core::video::needs_extractor(&url) {
+        return serde_json::to_value(m.video_info(&url).await?).map_err(|_| "Informasi video tidak valid.".into());
+    }
+    let direct = classify_info(&url)?;
+    Ok(serde_json::json!({"url":url,"title":direct.filename,"filename":direct.filename,"category":direct.category,"direct":true,"formats":[]}))
 }
 
 #[tauri::command]
@@ -239,12 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn info_routes_core_pages_to_legacy_message() {
-        assert!(classify_info("https://www.youtube.com/watch?v=x").unwrap_err().contains("belum tersedia"));
-        assert!(classify_info("https://youtu.be/x").unwrap_err().contains("belum tersedia"));
-        assert!(classify_info("https://drive.google.com/drive/folders/abc").unwrap_err().contains("belum tersedia"));
-        assert!(classify_info("https://a.com/x.m3u8").unwrap_err().contains("belum tersedia"));
-        assert!(classify_info("https://a.com/x.mpd?token=1").unwrap_err().contains("belum tersedia"));
+    fn direct_classification_does_not_mistake_video_pages_for_files() {
+        for url in ["https://www.youtube.com/watch?v=x", "https://youtu.be/x", "https://drive.google.com/drive/folders/abc",
+            "https://a.com/x.m3u8", "https://a.com/x.mpd?token=1"] { assert!(classify_info(url).is_err()); }
         let info = classify_info("https://a.com/files/setup.exe?v=2").unwrap();
         assert_eq!((info.filename.as_str(), info.category, info.direct), ("setup.exe", "Programs", true));
         assert_eq!(classify_info("notaurl").unwrap_err(), "Tautan tidak valid.");

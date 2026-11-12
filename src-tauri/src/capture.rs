@@ -51,6 +51,7 @@ fn new_task(item: &CaptureItem, url: &url::Url, filename: Option<String>, reques
     NewTask {
         url: url.to_string(),
         filename,
+        format_id: item.format_id.clone(),
         filesize: item.filesize,
         headers,
         request_id: Some(request_id.to_string()),
@@ -61,11 +62,15 @@ fn new_task(item: &CaptureItem, url: &url::Url, filename: Option<String>, reques
 /// Handles one request from the browser extension and produces its reply.
 pub async fn handle<P: Prompter, U: UiHooks>(request: Request, m: &Arc<Manager>, prompter: &P, ui: &U) -> Response {
     match request {
+        Request::Info { id, url } => match m.video_info(&url).await {
+            Ok(info) => Response { id, ok: true, info: serde_json::to_value(info).ok(), ..Default::default() },
+            Err(message) => Response::error(id, message),
+        },
         Request::Ping { id } => Response {
             id,
             ok: true,
             version: Some(env!("CARGO_PKG_VERSION").into()),
-            capabilities: vec!["capture".into(), "add".into(), "show".into()],
+            capabilities: vec!["capture".into(), "add".into(), "show".into(), "info".into(), "video".into()],
             ..Default::default()
         },
         Request::Show { id, add_url } => {
@@ -74,7 +79,26 @@ pub async fn handle<P: Prompter, U: UiHooks>(request: Request, m: &Arc<Manager>,
         }
         Request::Add { id, item } => {
             let Some(url) = http_url(&item.url) else { return Response::error(id, INVALID_URL) };
-            match m.add(new_task(&item, &url, item.filename.clone(), &id)) {
+            let mut task = new_task(&item, &url, item.filename.clone(), &id);
+            let is_video = openidm_core::video::needs_extractor(url.as_str()) ||
+                item.format_id.as_deref().is_some_and(|f| f != "direct");
+            if is_video {
+                let format = item.format_id.as_deref().unwrap_or("best");
+                if let Err(message) = openidm_core::video::selector(format) { return Response::error(id, message); }
+                if task.filename.is_none() {
+                    match m.video_info(&item.url).await {
+                        Ok(info) => task.filename = Some(info.filename),
+                        Err(message) => return Response::error(id, message),
+                    }
+                }
+                task.category = Some(if format == "audio" { "Music" } else { "Video" }.into());
+                if let Some(filename) = task.filename.as_mut() {
+                    let mut path = PathBuf::from(filename.as_str());
+                    path.set_extension(if format == "audio" { "m4a" } else { "mp4" });
+                    *filename = path.to_string_lossy().into_owned();
+                }
+            }
+            match m.add(task) {
                 Ok(row) => {
                     ui.show_main(None);
                     Response { id, ok: true, task_id: Some(row.id), ..Default::default() }
@@ -347,7 +371,7 @@ mod tests {
         let ping = handle(serde_json::from_value(json!({ "type": "ping", "id": "p" })).unwrap(), &m, &p, &ui).await;
         assert_eq!(js(&ping)["ok"], true);
         assert_eq!(js(&ping)["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(js(&ping)["capabilities"], json!(["capture", "add", "show"]));
+        assert_eq!(js(&ping)["capabilities"], json!(["capture", "add", "show", "info", "video"]));
 
         let add = handle(
             serde_json::from_value(json!({ "type": "add", "id": "a", "url": format!("{}/doc.pdf", s.url) })).unwrap(),

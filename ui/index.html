@@ -331,16 +331,16 @@
           <table class="downloads-table">
             <thead>
               <tr>
-                <th style="width: 44px; text-align: center;">
+                <th class="column-select">
                   <input type="checkbox" id="check-all" class="custom-checkbox" title="Pilih Semua">
                 </th>
-                <th style="min-width: 280px;">Nama Berkas</th>
-                <th style="width: 105px;">Ukuran</th>
-                <th style="width: 220px;">Progress</th>
-                <th style="width: 95px;">Kecepatan</th>
-                <th style="width: 85px;">Sisa Waktu</th>
-                <th style="width: 110px;">Status</th>
-                <th style="width: 140px; text-align: right; padding-right: 18px;">Aksi</th>
+                <th>Nama Berkas</th>
+                <th class="column-size">Ukuran</th>
+                <th class="column-progress">Progress</th>
+                <th class="column-speed">Kecepatan</th>
+                <th class="column-eta">Sisa Waktu</th>
+                <th class="column-status">Status</th>
+                <th class="column-actions">Aksi</th>
               </tr>
             </thead>
             <tbody id="downloads-list">
@@ -645,7 +645,57 @@
     </div>
   </div>
 
+  <!-- Detail koneksi (segmen unduhan) -->
+  <div id="segment-modal" class="modal-backdrop hidden">
+    <div class="modal-card segment-card" role="dialog" aria-modal="true" aria-labelledby="segment-modal-title">
+      <div class="modal-header">
+        <div class="modal-header-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="4" y1="6" x2="20" y2="6"></line>
+            <line x1="4" y1="12" x2="14" y2="12"></line>
+            <line x1="4" y1="18" x2="17" y2="18"></line>
+          </svg>
+          <div class="segment-heading">
+            <h3 id="segment-modal-title">Detail koneksi</h3>
+            <span class="segment-file" id="segment-modal-file"></span>
+          </div>
+        </div>
+        <button class="btn-close" id="btn-close-segments" data-close-segments aria-label="Tutup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="segment-summary" id="segment-summary"></p>
+        <div class="segment-map">
+          <div class="progress-track segmented large" id="segment-bar" aria-hidden="true"></div>
+        </div>
+        <div class="segment-table-wrap">
+          <table class="segment-table">
+            <thead>
+              <tr><th>#</th><th>Rentang</th><th>Terunduh</th><th>Kecepatan</th><th>Status</th></tr>
+            </thead>
+            <tbody id="segment-list"></tbody>
+          </table>
+        </div>
+        <div class="segment-empty hidden" id="segment-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <polyline points="14 6 20 12 14 18"></polyline>
+          </svg>
+          <p>Server berkas ini tidak mendukung unduhan bersegmen, jadi OpenIDM memakai satu koneksi.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-close-segments>Tutup</button>
+      </div>
+    </div>
+  </div>
+
   <script src="api.js"></script>
+  <script src="segments.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
 </body>

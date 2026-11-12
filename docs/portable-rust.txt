@@ -1,0 +1,39 @@
+OPENIDM 2.0.1 - PAKET PORTABLE RUST
+
+JALANKAN
+Klik OpenIDM.exe atau Jalankan-OpenIDM.bat.
+Aplikasi utama memakai Rust/Tauri dan tidak memakai server HTTP Python lama.
+Helper video yt-dlp.exe adalah alat standalone; tidak perlu instal Python.
+Windows memerlukan Microsoft Edge WebView2 Runtime untuk tampilan aplikasi.
+
+ISI PAKET
+- OpenIDM.exe: aplikasi Rust/Tauri; tampilan sudah tertanam dalam EXE.
+- openidm-host.exe: penghubung Native Messaging untuk ekstensi browser.
+- WebView2Loader.dll: loader tampilan; harus berada di samping OpenIDM.exe.
+- browser-extension: ekstensi OpenIDM 2.0 untuk Chrome/Edge.
+- bin: yt-dlp.exe, ffmpeg.exe, dan node.exe untuk analisis kualitas serta video/audio.
+- downloads.db dan settings.json: dibuat di samping EXE saat aplikasi digunakan.
+
+EKSTENSI
+Jalankan aplikasi agar host browser didaftarkan untuk pengguna Windows saat ini.
+Pendaftaran Native Messaging dan opsi autostart menggunakan pengaturan pengguna
+Windows; tidak memerlukan administrator. Statusnya terlihat di Pengaturan.
+Muat browser-extension melalui Load unpacked, lalu reload tab situs.
+Paket Rust memakai Native Messaging, bukan server Python 127.0.0.1:6899.
+YouTube dianalisis oleh helper video portable. Pilih kualitas lalu Mulai Unduh;
+audio dan video digabung oleh FFmpeg. Tidak perlu menginstal Python atau Node.
+
+MENUTUP DAN MEMINDAHKAN
+Tombol tutup menyembunyikan jendela ke tray. Pilih Keluar dari ikon tray untuk
+benar-benar menghentikan aplikasi sebelum menyalin folder dan database.
+Salin seluruh paket; jangan hanya menyalin OpenIDM.exe.
+Setelah dipindah, jalankan aplikasi dari lokasi baru dan muat ekstensi dari
+lokasi baru. Host browser didaftarkan ulang ketika aplikasi mulai berjalan.
+Lokasi berkas unduhan mengikuti Pengaturan. Berkas di luar folder paket perlu
+dibawa secara terpisah jika ingin dipindahkan ke komputer lain.
+
+PENGEMBANGAN
+Kode sumber: C:\xampp\htdocs\open-idm-src
+Paket utama: C:\xampp\htdocs\open-idm
+Uji coba: D:\rust\run-test (terpisah dari paket utama).
+Bangun paket dari sumber menggunakan build-rust.bat.

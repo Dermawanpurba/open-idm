@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "openidm"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "axum",
  "bytes",
@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "openidm-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "axum",
  "bytes",
@@ -2680,7 +2680,7 @@ dependencies = [
 
 [[package]]
 name = "openidm-host"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "openidm-core",
  "serde_json",
@@ -4506,6 +4506,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

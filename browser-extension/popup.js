@@ -44,7 +44,7 @@ async function checkStatus() {
   $("status-text").className = result.online ? "online" : "offline";
   $("status-text").textContent = result.online ? "OpenIDM terhubung" : "OpenIDM belum terhubung";
   $("connection-help").textContent = result.online
-    ? (result.legacy ? "Unduhan berkas dan video siap." : "Unduhan berkas siap. Untuk video, jalankan legacy\\OpenIDM.exe.")
+    ? (result.video ? "Unduhan berkas dan video siap." : "Unduhan berkas siap. Perbarui aplikasi untuk fitur video.")
     : "Buka OpenIDM.exe sekali agar browser mengenalinya, lalu klik Periksa lagi.";
 }
 async function loadMedia() {

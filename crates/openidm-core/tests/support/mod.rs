@@ -30,6 +30,12 @@ pub struct ServeOpts {
     pub throttle_bps: Option<u64>,
     /// Honour only the `bytes=0-0` probe; answer any other range with a full 200 body.
     pub ignore_range_after_probe: bool,
+    /// Answer every request with `302 Location: <value>`.
+    pub redirect_to: Option<String>,
+    /// Allow at most this many responses in flight; extra requests get `429` + `Retry-After: 0`.
+    pub max_connections: Option<usize>,
+    /// Answer the first N requests with the given status (e.g. a throttled probe).
+    pub fail_first: Option<(usize, u16)>,
 }
 
 /// A well-behaved server: ranges and content length.
@@ -56,6 +62,17 @@ struct Shared {
     hits: Arc<AtomicUsize>,
     served: Arc<AtomicU64>,
     last_headers: Mutex<HashMap<String, String>>,
+    in_flight: Arc<AtomicUsize>,
+    peak_in_flight: Arc<AtomicUsize>,
+    ranges_seen: Mutex<Vec<(u64, Option<u64>)>>,
+}
+
+/// Counts a response as in flight until its body is finished or dropped.
+struct InFlight(Arc<AtomicUsize>);
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 pub struct TestServer {
@@ -74,6 +91,14 @@ impl TestServer {
     pub fn last_headers(&self) -> HashMap<String, String> {
         self.shared.last_headers.lock().unwrap().clone()
     }
+    /// Highest number of responses that were streaming at the same time.
+    pub fn peak_connections(&self) -> usize {
+        self.shared.peak_in_flight.load(Ordering::SeqCst)
+    }
+    /// Every `Range` header received, as (start, end).
+    pub fn ranges_seen(&self) -> Vec<(u64, Option<u64>)> {
+        self.shared.ranges_seen.lock().unwrap().clone()
+    }
 }
 
 pub async fn serve(body: Vec<u8>, opts: ServeOpts) -> TestServer {
@@ -84,6 +109,9 @@ pub async fn serve(body: Vec<u8>, opts: ServeOpts) -> TestServer {
         hits: hits.clone(),
         served: Arc::new(AtomicU64::new(0)),
         last_headers: Mutex::new(HashMap::new()),
+        in_flight: Arc::new(AtomicUsize::new(0)),
+        peak_in_flight: Arc::new(AtomicUsize::new(0)),
+        ranges_seen: Mutex::new(Vec::new()),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -105,15 +133,34 @@ fn empty(status: u16) -> Response {
 }
 
 async fn handle(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
-    s.hits.fetch_add(1, Ordering::SeqCst);
+    let hit = s.hits.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(r) = parse_range(&headers) {
+        s.ranges_seen.lock().unwrap().push(r);
+    }
     *s.last_headers.lock().unwrap() = headers
         .iter()
         .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
     let o = s.opts.lock().unwrap().clone();
+    if let Some(location) = &o.redirect_to {
+        return Response::builder().status(302).header(header::LOCATION, location).body(Body::empty()).unwrap();
+    }
     if let Some(status) = o.status {
         return empty(status);
     }
+    if let Some((n, status)) = o.fail_first {
+        if hit <= n {
+            return Response::builder().status(status).header(header::RETRY_AFTER, "0").body(Body::empty()).unwrap();
+        }
+    }
+    let now = s.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+    let guard = InFlight(s.in_flight.clone());
+    if o.max_connections.is_some_and(|limit| now > limit) {
+        drop(guard);
+        return Response::builder().status(429).header(header::RETRY_AFTER, "0").body(Body::empty()).unwrap();
+    }
+    s.peak_in_flight.fetch_max(now, Ordering::SeqCst);
+    let guard = Arc::new(guard);
     let total = s.body.len() as u64;
     let range = parse_range(&headers);
     let is_probe = range == Some((0, Some(0)));
@@ -151,7 +198,10 @@ async fn handle(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
         let slice = slice.clone();
         let served = served.clone();
         let o = o.clone();
+        // Held by the body stream: the connection counts as in flight until the body is done or dropped.
+        let _guard = guard.clone();
         async move {
+            let _guard = _guard;
             if failed || pos >= len {
                 return None;
             }
