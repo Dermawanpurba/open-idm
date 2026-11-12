@@ -1,0 +1,10 @@
+/bin/
+/build/
+/dist/
+/target/
+/.superpowers/
+__pycache__/
+*.pyc
+*.db
+*.db-*
+/scripts/icon-cache/

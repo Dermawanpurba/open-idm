@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenIDM</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="icons/icon48.png" width="28" height="28" alt=""><h1>Open<span>IDM</span></h1></div>
+    <button id="btn-open-dashboard" class="quiet">Dashboard desktop</button>
+  </header>
+  <main>
+    <div class="connection"><span id="status-text" role="status">Memeriksa desktop…</span><button id="btn-refresh" class="quiet">Periksa lagi</button></div>
+    <p id="connection-help" class="hint">File langsung dapat diunduh tanpa desktop.</p>
+    <form id="download-form">
+      <label for="download-url">Tambah tautan unduhan</label>
+      <div class="input-row"><input id="download-url" type="url" placeholder="https://…/file.zip" required><button type="submit" id="btn-add">Unduh</button></div>
+    </form>
+    <div class="preferences">
+      <label for="download-mode">Unduh melalui</label>
+      <select id="download-mode"><option value="auto">Otomatis</option><option value="browser">Chrome</option><option value="core">OpenIDM Desktop</option></select>
+    </div>
+    <p id="mode-help" class="hint">Memakai desktop jika aktif; file langsung memakai Chrome saat desktop mati.</p>
+    <label class="checkbox"><input type="checkbox" id="save-as">Tanyakan lokasi penyimpanan di Chrome</label>
+    <p id="feedback" role="status" aria-live="polite" hidden></p>
+    <section aria-labelledby="media-heading">
+      <div class="section-header"><h2 id="media-heading">Media halaman ini <span id="media-count"></span></h2><button id="btn-page" class="quiet">Kirim halaman</button></div>
+      <p id="page-title" class="page-title"></p>
+      <div id="media-list" class="media-list" aria-live="polite"><p class="empty-state">Mencari media…</p></div>
+    </section>
+    <section aria-labelledby="downloads-heading">
+      <div class="section-header"><h2 id="downloads-heading">Unduhan Chrome</h2><button id="btn-downloads" class="quiet">Lihat semua</button></div>
+      <div id="downloads-list"><p class="empty-state">Belum ada unduhan dari ekstensi ini.</p></div>
+    </section>
+  </main>
+  <footer>Klik kanan tautan atau video untuk mengunduh dengan OpenIDM.</footer>
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,888 @@
+import os
+import re
+import sys
+import time
+import math
+import threading
+from pathlib import Path
+from typing import Dict, Any, Callable, Optional, List
+import requests
+import yt_dlp
+
+from .config import CHUNK_BUFFER_SIZE, DEFAULT_CHUNKS, DOWNLOADS_DIR, get_ffmpeg_path, get_node_path
+
+class DownloadTask:
+    def __init__(
+        self,
+        task_id: str,
+        url: str,
+        title: str,
+        filename: str,
+        category: str = "General",
+        format_id: str = "best",
+        filesize: int = 0,
+        filepath: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        prev_error_message: Optional[str] = None,
+        on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_complete: Optional[Callable[[str], None]] = None,
+        on_error: Optional[Callable[[str, str], None]] = None
+    ):
+        self.task_id = task_id
+        self.url = url
+        self.title = title
+        self.filename = filename
+        self.category = category
+        self.format_id = format_id
+        self.headers = headers or {}
+        self.prev_error_message = prev_error_message or ""
+
+        cat_folder = DOWNLOADS_DIR / self.category
+        cat_folder.mkdir(parents=True, exist_ok=True)
+        self.filepath = filepath or str(cat_folder / self.filename)
+
+        self.on_progress = on_progress
+        self.on_complete = on_complete
+        self.on_error = on_error
+
+        self.status = "pending"  # pending, downloading, paused, completed, error
+        self.filesize = filesize or 0
+        self.downloaded_bytes = 0
+        self.speed = 0.0
+        self.eta = 0
+        self.progress = 0.0
+        self.error_message = ""
+        self.can_resume = True
+        self.num_chunks = DEFAULT_CHUNKS
+        worker_initial_total = (self.filesize // self.num_chunks) if self.filesize > 0 else 0
+        self.chunks_data: List[Dict[str, Any]] = [
+            {
+                "num": i + 1,
+                "start": i * worker_initial_total,
+                "end": max(0, (i + 1) * worker_initial_total - 1),
+                "total": worker_initial_total,
+                "downloaded": 0,
+                "percent": 0.0,
+                "status": f"Menerima data... (Server #{i+1})"
+            }
+            for i in range(self.num_chunks)
+        ]
+
+        self._stop_event = threading.Event()
+        self._is_paused = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        self._stop_event.clear()
+        self._is_paused = False
+        self.status = "downloading"
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def pause(self) -> None:
+        self._is_paused = True
+        self._stop_event.set()
+        self.status = "paused"
+        for c in self.chunks_data:
+            if c.get("status") != "Selesai":
+                c["status"] = "Dijeda"
+        self._notify_progress()
+
+    def resume(self) -> None:
+        if self.status == "paused":
+            self.start()
+
+    def cancel(self) -> None:
+        self._stop_event.set()
+        self.status = "error"
+        self.error_message = "Dibatalkan oleh pengguna"
+
+    def _notify_progress(self) -> None:
+        if self.on_progress:
+            self.on_progress({
+                "id": self.task_id,
+                "status": self.status,
+                "downloaded_bytes": self.downloaded_bytes,
+                "filesize": self.filesize,
+                "speed": self.speed,
+                "eta": self.eta,
+                "progress": self.progress,
+                "error_message": self.error_message,
+                "can_resume": self.can_resume,
+                "num_chunks": self.num_chunks,
+                "chunks": self.chunks_data
+            })
+
+    @staticmethod
+    def _safe_rename_with_retries(src: str, dst: str, max_retries: int = 25, delay: float = 0.4) -> bool:
+        if not os.path.exists(src):
+            return False
+        if os.path.abspath(src) == os.path.abspath(dst):
+            return True
+        for attempt in range(max_retries):
+            try:
+                if os.path.exists(dst):
+                    try:
+                        os.remove(dst)
+                    except Exception:
+                        pass
+                os.replace(src, dst)
+                return True
+            except OSError:
+                if attempt >= max_retries - 1:
+                    return False
+                time.sleep(delay)
+        return False
+
+    def _run(self) -> None:
+        try:
+            from .gdrive_handler import GoogleDriveHandler
+            archive_exts = (".zip", ".rar", ".7z", ".tar", ".gz", ".iso", ".exe", ".msi", ".pdf", ".docx", ".xlsx")
+            is_direct_job = (
+                self.format_id == "direct"
+                or any(self.filename.lower().endswith(ext) for ext in archive_exts)
+                or any(self.url.split("?")[0].lower().endswith(ext) for ext in archive_exts)
+            )
+            # Only use Google Drive page scraper if it is NOT a direct download stream
+            is_gdrive = (not is_direct_job) and GoogleDriveHandler.is_gdrive_url(self.url) and bool(GoogleDriveHandler.FILE_REGEX.search(self.url))
+            # 1. Quick check: If completed final file already exists and is non-empty
+            # Instead of skipping, rename the existing file so a fresh download can proceed.
+            if os.path.exists(self.filepath) and os.path.getsize(self.filepath) > 0:
+                base_path = Path(self.filepath)
+                stem = base_path.stem
+                suffix = base_path.suffix
+                parent = base_path.parent
+                counter = 1
+                while True:
+                    new_path = parent / f"{stem} ({counter}){suffix}"
+                    if not new_path.exists():
+                        break
+                    counter += 1
+                try:
+                    os.rename(self.filepath, str(new_path))
+                except OSError:
+                    pass  # If rename fails, continue anyway — yt-dlp will overwrite
+
+            base_dir = Path(self.filepath).parent
+            base_stem = Path(self.filepath).stem
+
+            # 2. Auto-Recovery: If .part file exists from a previous completed download that hit rename file-lock (WinError 32)
+            part_path = self.filepath + ".part"
+            if not os.path.exists(part_path) and base_dir.exists():
+                for cand in base_dir.iterdir():
+                    if cand.is_file() and cand.name.startswith(base_stem) and cand.name.endswith(".part") and "-frag" not in cand.name.lower():
+                        part_path = str(cand)
+                        break
+
+            if not is_gdrive and os.path.exists(part_path) and os.path.getsize(part_path) > 1024 * 1024:
+                prev_err = (getattr(self, "prev_error_message", "") or "").lower()
+                is_rename_error = "unable to rename" in prev_err or "winerror 32" in prev_err or "being used by another process" in prev_err
+                part_size = os.path.getsize(part_path)
+                is_full_size = self.filesize > 0 and (part_size >= self.filesize * 0.95 or abs(part_size - self.filesize) <= 10 * 1024 * 1024)
+
+                if is_rename_error or is_full_size:
+                    dest_target = self.filepath
+                    if not dest_target.lower().endswith(Path(part_path).stem.split('.')[-1].lower()):
+                        dest_target = part_path[:-5]
+
+                    if self._safe_rename_with_retries(part_path, dest_target):
+                        self.filepath = dest_target
+                        self.filename = os.path.basename(dest_target)
+                        self.filesize = os.path.getsize(dest_target)
+                        self.downloaded_bytes = self.filesize
+                        self.status = "completed"
+                        self.progress = 100.0
+                        self.speed = 0.0
+                        self.eta = 0
+                        # Clean up any leftover fragment files
+                        if base_dir.exists():
+                            for p in base_dir.iterdir():
+                                if p.is_file() and p.name.startswith(base_stem) and "-frag" in p.name.lower():
+                                    try:
+                                        p.unlink()
+                                    except Exception:
+                                        pass
+                        from .database import DatabaseManager
+                        DatabaseManager().update_file_info(self.task_id, self.filepath, self.filename, self.filesize)
+                        DatabaseManager().update_status(self.task_id, "completed")
+                        self._notify_progress()
+                        if self.on_complete:
+                            self.on_complete(self.task_id)
+                        return
+
+            # 3. Clean up broken temporary fragment/metadata files safely (using iterdir without glob syntax brackets collision)
+            if base_dir.exists():
+                for p in base_dir.iterdir():
+                    if p.is_file() and p.name.startswith(base_stem):
+                        p_lower = p.name.lower()
+                        if p_lower.endswith(('.ytdl', '.temp', '.tmp')) or '-frag' in p_lower:
+                            try:
+                                p.unlink()
+                            except Exception:
+                                pass
+
+            # Check if URL is Google Drive
+
+            # Check if URL is an HTML page embedding a video (e.g. Anichin embedding Dailymotion)
+            if not is_gdrive and not self.url.lower().endswith((".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".flv", ".ts")) and not any(d in self.url.lower() for d in ["drive.google.com", "drive.usercontent.google.com"]):
+                from .stream_extractor import StreamExtractor
+                embedded = StreamExtractor.resolve_embedded_video(self.url)
+                if embedded:
+                    self.url = embedded[0]
+                    try:
+                        from .database import DatabaseManager
+                        DatabaseManager().update_url(self.task_id, self.url)
+                    except Exception:
+                        pass
+
+            clean_url = self.url.split("?")[0].lower()
+            is_manifest = clean_url.endswith(".m3u8") or clean_url.endswith(".mpd") or ".m3u8" in self.url.lower()
+            is_dmcdn = any(domain in self.url.lower() for domain in ["vod3.cf.dmcdn.net", "dmcdn.net"])
+            is_platform = any(domain in self.url.lower() for domain in [
+                "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "twitter.com", "x.com",
+                "facebook.com", "fb.watch", "vimeo.com", "dailymotion.com", "twitch.tv", "bilibili.com",
+                "soundcloud.com", "reddit.com"
+            ]) and not is_dmcdn
+
+            # Determine whether this is a direct media file (multi-chunk) or needs stream extraction (yt-dlp)
+            use_multi_chunk = is_direct_job
+
+            if not is_gdrive and not is_manifest and not is_platform and not is_direct_job:
+                try:
+                    probe_headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    }
+                    if is_dmcdn or "dailymotion.com" in self.url.lower():
+                        probe_headers["Referer"] = "https://www.dailymotion.com/"
+                        probe_headers["Origin"] = "https://www.dailymotion.com"
+
+                    if self.headers and isinstance(self.headers, dict):
+                        for k, v in self.headers.items():
+                            if v:
+                                probe_headers[k] = v
+
+                    probe = requests.head(self.url, headers=probe_headers, allow_redirects=True, timeout=8)
+                    if probe.status_code >= 400:
+                        probe = requests.get(self.url, headers={**probe_headers, "Range": "bytes=0-0"}, stream=True, timeout=8)
+
+                    ct = probe.headers.get("Content-Type", "").lower()
+                    ar = probe.headers.get("Accept-Ranges", "").lower()
+                    cl = int(probe.headers.get("Content-Length", 0))
+
+                    # If it's an HTML page (like anichin.com.co or blog), it must be extracted via yt-dlp!
+                    if "text/html" in ct:
+                        use_multi_chunk = False
+                    elif any(m in ct for m in ["video/", "audio/", "application/zip", "application/x-", "application/octet-stream", "binary/"]) or (cl > 0 and ("bytes" in ar or "content-range" in probe.headers)):
+                        use_multi_chunk = True
+                        self.can_resume = "bytes" in ar or "content-range" in probe.headers
+                except Exception:
+                    # Fallback check on file extension or video CDN
+                    direct_exts = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".mp3", ".zip", ".rar", ".exe", ".iso", ".ts"]
+                    if any(clean_url.endswith(ext) for ext in direct_exts) or is_dmcdn:
+                        use_multi_chunk = True
+
+            if is_gdrive:
+                self._download_google_drive()
+            elif use_multi_chunk:
+                self._download_multi_chunk()
+            else:
+                self._download_with_ytdlp()
+
+            if not self._stop_event.is_set():
+                self.status = "completed"
+                self.progress = 100.0
+                self.speed = 0.0
+                self.eta = 0
+                self._notify_progress()
+                if self.on_complete:
+                    self.on_complete(self.task_id)
+
+        except Exception as e:
+            if not self._stop_event.is_set():
+                self.status = "error"
+                raw_err = str(e)
+                # Strip ANSI escape codes
+                clean_err = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_err).strip()
+                if "ffmpeg is not installed" in clean_err.lower():
+                    clean_err = "FFmpeg tidak ditemukan. Silakan pastikan bin/ffmpeg.exe tersedia untuk menggabungkan format video & audio."
+                elif "read timed out" in clean_err.lower() or "connection timed out" in clean_err.lower() or "timed out" in clean_err.lower():
+                    clean_err = "Koneksi ke server timeout (waktu habis). Klik 'Coba Lagi' untuk menyambungkan kembali."
+                elif "postprocessing" in clean_err.lower() or "invalid data found" in clean_err.lower():
+                    clean_err = "Gagal memproses stream video. Silakan klik 'Coba Lagi' untuk mengunduh stream alternatif."
+                self.error_message = clean_err
+                self.speed = 0.0
+                self.eta = 0
+                self._notify_progress()
+                if self.on_error:
+                    self.on_error(self.task_id, clean_err)
+
+    def _download_with_ytdlp(self) -> None:
+        last_time = time.time()
+        last_bytes = 0
+
+        def ytdl_hook(d: Dict[str, Any]) -> None:
+            nonlocal last_time, last_bytes
+            if self._stop_event.is_set():
+                raise InterruptedError("Download dihentikan")
+
+            status = d.get("status")
+            if status == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                downloaded = d.get("downloaded_bytes") or 0
+                current_speed = d.get("speed") or 0.0
+                current_eta = d.get("eta") or 0
+
+                frag_index = d.get("fragment_index")
+                frag_count = d.get("fragment_count")
+
+                now = time.time()
+                # Update progress every 250ms
+                if now - last_time >= 0.25:
+                    if total > 0:
+                        self.filesize = total
+
+                    if frag_index and frag_count and frag_count > 0:
+                        self.progress = min(99.9, round((frag_index / frag_count) * 100.0, 1))
+                        if self.filesize > 0:
+                            self.downloaded_bytes = min(self.filesize, int((frag_index / frag_count) * self.filesize))
+                        else:
+                            self.downloaded_bytes = min(downloaded, downloaded)  # HLS: use actual bytes
+                    elif self.filesize > 0 and downloaded > 0:
+                        self.downloaded_bytes = min(downloaded, self.filesize)  # never exceed filesize
+                        self.progress = min(99.9, round((self.downloaded_bytes / self.filesize) * 100.0, 1))
+                    elif downloaded > 0:
+                        self.downloaded_bytes = downloaded
+
+                    self.speed = current_speed
+                    self.eta = current_eta
+
+                    # Persist progress to DB every 1 second so polling UI always gets live data
+                    if now - last_time >= 1.0:
+                        try:
+                            from .database import DatabaseManager
+                            DatabaseManager().update_progress(
+                                self.task_id,
+                                self.downloaded_bytes,
+                                self.filesize,
+                                self.speed,
+                                self.eta,
+                                self.progress
+                            )
+                        except Exception:
+                            pass
+
+                    # 8 Parallel Connections - ALL RUNNING SIMULTANEOUSLY (BERJALAN BERBARENGAN)
+                    num_chunks = 8
+                    self.num_chunks = num_chunks
+                    self.chunks_data = []
+
+                    if frag_count and frag_count > 0:
+                        frags_per_worker = math.ceil(frag_count / num_chunks)
+                        active_frags = frag_index or 0
+
+                        for i in range(num_chunks):
+                            c_down_frags = (active_frags // num_chunks) + (1 if (active_frags % num_chunks) > i else 0)
+                            c_down_frags = min(c_down_frags, frags_per_worker)
+                            c_percent = min(100.0, round((c_down_frags / frags_per_worker) * 100.0, 1)) if frags_per_worker > 0 else 0
+
+                            if c_percent >= 100.0:
+                                c_status = "Selesai"
+                            elif self._is_paused:
+                                c_status = "Dijeda"
+                            else:
+                                c_status = f"Menerima data... (Server #{i+1})"
+
+                            worker_total_bytes = (self.filesize // num_chunks) if self.filesize > 0 else frags_per_worker
+                            worker_down_bytes = int((c_percent / 100.0) * worker_total_bytes) if self.filesize > 0 else c_down_frags
+
+                            self.chunks_data.append({
+                                "num": i + 1,
+                                "start": i * frags_per_worker + 1,
+                                "end": min((i + 1) * frags_per_worker, frag_count),
+                                "total": worker_total_bytes,
+                                "downloaded": worker_down_bytes,
+                                "percent": c_percent,
+                                "status": c_status
+                            })
+                    elif self.filesize > 0:
+                        worker_total_bytes = math.ceil(self.filesize / num_chunks)
+                        active_bytes = self.downloaded_bytes or downloaded
+
+                        for i in range(num_chunks):
+                            c_down_bytes = (active_bytes // num_chunks) + (1 if (active_bytes % num_chunks) > i else 0)
+                            c_down_bytes = min(c_down_bytes, worker_total_bytes)
+                            c_percent = min(100.0, round((c_down_bytes / worker_total_bytes) * 100.0, 1)) if worker_total_bytes > 0 else 0
+
+                            if c_percent >= 100.0:
+                                c_status = "Selesai"
+                            elif self._is_paused:
+                                c_status = "Dijeda"
+                            else:
+                                c_status = f"Menerima data... (Server #{i+1})"
+
+                            self.chunks_data.append({
+                                "num": i + 1,
+                                "start": i * worker_total_bytes,
+                                "end": min((i + 1) * worker_total_bytes - 1, self.filesize - 1),
+                                "total": worker_total_bytes,
+                                "downloaded": c_down_bytes,
+                                "percent": c_percent,
+                                "status": c_status
+                            })
+                    else:
+                        for i in range(num_chunks):
+                            self.chunks_data.append({
+                                "num": i + 1,
+                                "start": 0,
+                                "end": 0,
+                                "total": 0,
+                                "downloaded": 0,
+                                "percent": self.progress,
+                                "status": f"Menerima data... (Server #{i+1})"
+                            })
+
+                    self._notify_progress()
+                    last_time = now
+
+            elif status == "finished":
+                self.downloaded_bytes = self.filesize
+                self.progress = 100.0
+                if self.chunks_data:
+                    for c in self.chunks_data:
+                        c["status"] = "Selesai"
+                        c["percent"] = 100.0
+                        if c["total"] > 0:
+                            c["downloaded"] = c["total"]
+                self._notify_progress()
+
+        ffmpeg_exe = get_ffmpeg_path()
+        node_exe = get_node_path()
+
+        # Extract target height/resolution if user selected one (e.g. [480p] or 480p)
+        m_res = re.search(r'\[?(\d{3,4})p\]?', self.filename or "")
+        target_h = int(m_res.group(1)) if m_res else None
+        if not target_h and self.format_id:
+            m_fmt = re.search(r'(\d{3,4})p', self.format_id)
+            if m_fmt:
+                target_h = int(m_fmt.group(1))
+
+        # Build height-constrained fallback so yt-dlp never silently jumps from 480p to 1080p
+        if target_h:
+            height_fallback = f"bestvideo*[height<={target_h}]+bestaudio/best[height<={target_h}]"
+        else:
+            height_fallback = "bestvideo*+bestaudio/best"
+
+        # Smart format selection for yt-dlp
+        is_audio = self.category == "Music" or "audio" in (self.format_id or "").lower()
+
+        if is_audio:
+            chosen_format = self.format_id if (self.format_id and self.format_id != "best") else "bestaudio/best"
+        elif not self.format_id or self.format_id in ["best", "direct", "original"]:
+            chosen_format = height_fallback
+        elif "/" in self.format_id or "+" in self.format_id:
+            base_fid = self.format_id.split("+")[0].split("/")[0]
+            clean_fmt = re.sub(r'/(?:bestvideo\*?\+bestaudio|best)$', '', self.format_id)
+            chosen_format = f"{clean_fmt}/{base_fid}/{height_fallback}"
+        else:
+            chosen_format = f"{self.format_id}+bestaudio/{self.format_id}/{height_fallback}"
+
+        if not ffmpeg_exe and "+" in chosen_format:
+            if target_h:
+                chosen_format = f"best[height<={target_h}][ext=mp4]/best[height<={target_h}]"
+            else:
+                chosen_format = "best[ext=mp4]/best"
+
+        out_template = str(Path(self.filepath).with_suffix("")) + ".%(ext)s"
+        ydl_opts = {
+            "format": chosen_format,
+            "outtmpl": out_template,
+            "progress_hooks": [ytdl_hook],
+            "quiet": True,
+            "no_warnings": True,
+            "no_color": True,
+            "nocheckcertificate": True,
+            "hls_use_mpegts": True,
+            "windowsfilenames": True,
+            "retries": 30,
+            "fragment_retries": 30,
+            "file_access_retries": 30,
+            "retry_sleep_functions": {
+                "file_access": lambda n: min(0.5 * (1.5 ** n), 5.0),
+            },
+            "socket_timeout": 60,
+            "concurrent_fragment_downloads": 8,  # 8 parallel download connections running concurrently
+            "buffersize": 1024 * 1024,
+            "http_chunk_size": 10485760,
+        }
+        if ffmpeg_exe:
+            ydl_opts["ffmpeg_location"] = ffmpeg_exe
+        if node_exe:
+            ydl_opts["js_runtimes"] = {"node": {}}
+
+        ydl_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+        if any(d in self.url.lower() for d in ["vod3.cf.dmcdn.net", "dmcdn.net", "dailymotion.com"]):
+            ydl_headers["Referer"] = "https://www.dailymotion.com/"
+            ydl_headers["Origin"] = "https://www.dailymotion.com"
+
+        if self.headers and isinstance(self.headers, dict):
+            for k, v in self.headers.items():
+                if v:
+                    ydl_headers[k] = v
+
+        ydl_opts["http_headers"] = ydl_headers
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=True)
+        except Exception as dl_err:
+            err_str = str(dl_err).lower()
+            if "unable to rename" in err_str or "winerror 32" in err_str or "being used by another process" in err_str:
+                # yt-dlp finished writing and closed files, but Windows Defender/Index locked the rename.
+                # Auto-recover by locating the .part file and safely renaming it with retries.
+                parent_dir = Path(self.filepath).parent
+                base_stem = Path(self.filepath).stem
+                part_candidate = None
+                if os.path.exists(self.filepath + ".part"):
+                    part_candidate = self.filepath + ".part"
+                elif parent_dir.exists():
+                    for cand in parent_dir.iterdir():
+                        if cand.is_file() and cand.name.startswith(base_stem) and cand.name.endswith(".part"):
+                            part_candidate = str(cand)
+                            break
+
+                if part_candidate:
+                    target_dest = part_candidate[:-5]
+                    if self._safe_rename_with_retries(part_candidate, target_dest):
+                        actual_filename = target_dest
+                        info = {"filepath": target_dest}
+                        if parent_dir.exists():
+                            for p in parent_dir.iterdir():
+                                if p.is_file() and p.name.startswith(base_stem) and "-frag" in p.name.lower():
+                                    try:
+                                        p.unlink()
+                                    except Exception:
+                                        pass
+                    else:
+                        raise dl_err
+                else:
+                    raise dl_err
+            elif "postprocessing" in err_str or "invalid data" in err_str or "requested format" in err_str:
+                if target_h:
+                    ydl_opts["format"] = f"bestvideo*[height<={target_h}]+bestaudio/best[height<={target_h}][ext=mp4]/best[height<={target_h}]"
+                else:
+                    ydl_opts["format"] = "best[ext=mp4]/best"
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(self.url, download=True)
+            else:
+                raise dl_err
+
+        if info:
+            # Update actual resulting file path
+            actual_filename = ydl.prepare_filename(info)
+            if not os.path.exists(actual_filename):
+                req_dl = info.get("requested_downloads")
+                if req_dl and isinstance(req_dl, list) and req_dl[0].get("filepath"):
+                    actual_filename = req_dl[0]["filepath"]
+                else:
+                    base_stem = Path(actual_filename).stem
+                    parent_dir = Path(actual_filename).parent
+                    if parent_dir.exists():
+                        for candidate in parent_dir.iterdir():
+                            if candidate.stem == base_stem and candidate.suffix not in ['.part', '.ytdl', '.temp']:
+                                actual_filename = str(candidate)
+                                break
+
+            self.filepath = actual_filename
+            self.filename = os.path.basename(actual_filename)
+            if os.path.exists(self.filepath):
+                self.filesize = os.path.getsize(self.filepath)
+                self.downloaded_bytes = self.filesize
+                self.progress = 100.0
+                try:
+                    from .database import DatabaseManager
+                    DatabaseManager().update_file_info(self.task_id, self.filepath, self.filename, self.filesize)
+                except Exception:
+                    pass
+
+    def _download_multi_chunk(self) -> None:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+        if any(d in self.url.lower() for d in ["vod3.cf.dmcdn.net", "dmcdn.net", "dailymotion.com"]):
+            headers["Referer"] = "https://www.dailymotion.com/"
+            headers["Origin"] = "https://www.dailymotion.com"
+
+        if self.headers and isinstance(self.headers, dict):
+            for k, v in self.headers.items():
+                if v:
+                    headers[k] = v
+
+        accept_ranges = False
+        try:
+            res = requests.head(self.url, headers=headers, allow_redirects=True, timeout=20)
+            if res.status_code >= 400:
+                res = requests.get(self.url, headers={**headers, "Range": "bytes=0-0"}, stream=True, timeout=20)
+            self.url = res.url
+            self.filesize = int(res.headers.get("Content-Length", 0))
+            if "content-range" in res.headers and not self.filesize:
+                range_match = re.search(r"/(\d+)", res.headers["content-range"])
+                if range_match:
+                    self.filesize = int(range_match.group(1))
+            accept_ranges = "bytes" in res.headers.get("Accept-Ranges", "").lower() or "content-range" in res.headers
+        except Exception:
+            accept_ranges = False
+
+        # If server does not support Range requests or filesize is small (< 2MB), download single stream
+        if not accept_ranges or self.filesize < 2 * 1024 * 1024:
+            self._download_single_stream(headers)
+            return
+
+        # Multi-chunk segmented downloading (IDM-style 8 chunks)
+        num_chunks = DEFAULT_CHUNKS
+        self.num_chunks = num_chunks
+        self.can_resume = accept_ranges
+        chunk_size = math.ceil(self.filesize / num_chunks)
+        part_files: List[str] = []
+        chunk_progress: List[int] = [0] * num_chunks
+        threads: List[threading.Thread] = []
+
+        chunk_dir = Path(self.filepath + ".chunks")
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        self.chunks_data = []
+        for i in range(num_chunks):
+            part_path = str(chunk_dir / f"part_{i}.tmp")
+            part_files.append(part_path)
+            start_byte = i * chunk_size
+            end_byte = min(start_byte + chunk_size - 1, self.filesize - 1)
+
+            # Check if part already partially exists for resume
+            existing_bytes = os.path.getsize(part_path) if os.path.exists(part_path) else 0
+            chunk_progress[i] = existing_bytes
+            part_total = max(1, end_byte - start_byte + 1)
+
+            self.chunks_data.append({
+                "num": i + 1,
+                "start": start_byte,
+                "end": end_byte,
+                "total": part_total,
+                "downloaded": existing_bytes,
+                "percent": round((existing_bytes / part_total) * 100, 1),
+                "status": "Menerima data..." if existing_bytes < part_total else "Selesai"
+            })
+
+            t = threading.Thread(
+                target=self._worker_download_chunk,
+                args=(i, start_byte + existing_bytes, end_byte, part_path, chunk_progress, headers),
+                daemon=True
+            )
+            threads.append(t)
+            t.start()
+
+        # Progress monitor loop
+        last_downloaded = sum(chunk_progress)
+        last_time = time.time()
+
+        while any(t.is_alive() for t in threads):
+            if self._stop_event.is_set():
+                for c in self.chunks_data:
+                    if c.get("status") != "Selesai":
+                        c["status"] = "Dijeda"
+                self._notify_progress()
+                return
+
+            time.sleep(0.3)
+            current_downloaded = sum(chunk_progress)
+            now = time.time()
+            elapsed = now - last_time
+            if elapsed > 0:
+                self.speed = (current_downloaded - last_downloaded) / elapsed
+                last_downloaded = current_downloaded
+                last_time = now
+
+            self.downloaded_bytes = current_downloaded
+            if self.filesize > 0:
+                self.progress = round((current_downloaded / self.filesize) * 100.0, 1)
+                remaining_bytes = self.filesize - current_downloaded
+                self.eta = int(remaining_bytes / self.speed) if self.speed > 0 else 0
+
+            # Update live chunks info
+            for i in range(num_chunks):
+                cur_dl = chunk_progress[i]
+                tot_p = self.chunks_data[i]["total"]
+                self.chunks_data[i]["downloaded"] = cur_dl
+                self.chunks_data[i]["percent"] = round((cur_dl / tot_p) * 100.0, 1) if tot_p > 0 else 0
+                if cur_dl >= tot_p:
+                    self.chunks_data[i]["status"] = "Selesai"
+                elif self._is_paused:
+                    self.chunks_data[i]["status"] = "Dijeda"
+                else:
+                    self.chunks_data[i]["status"] = f"Menerima data... (Server #{i+1})"
+
+            self._notify_progress()
+
+        for t in threads:
+            t.join()
+
+        if self._stop_event.is_set():
+            return
+
+        # Merge all chunks into final file
+        with open(self.filepath, "wb") as outfile:
+            for part in part_files:
+                if os.path.exists(part):
+                    with open(part, "rb") as infile:
+                        while chunk := infile.read(CHUNK_BUFFER_SIZE * 4):
+                            outfile.write(chunk)
+                    try:
+                        os.remove(part)
+                    except OSError:
+                        pass
+
+        try:
+            chunk_dir.rmdir()
+        except OSError:
+            pass
+
+    def _worker_download_chunk(
+        self,
+        index: int,
+        start_byte: int,
+        end_byte: int,
+        part_path: str,
+        chunk_progress: List[int],
+        headers: Dict[str, str]
+    ) -> None:
+        if start_byte > end_byte:
+            return
+
+        req_headers = {**headers, "Range": f"bytes={start_byte}-{end_byte}"}
+        try:
+            with requests.get(self.url, headers=req_headers, stream=True, timeout=15) as r:
+                r.raise_for_status()
+                mode = "ab" if os.path.exists(part_path) else "wb"
+                with open(part_path, mode) as f:
+                    for chunk in r.iter_content(chunk_size=CHUNK_BUFFER_SIZE):
+                        if self._stop_event.is_set():
+                            return
+                        if chunk:
+                            f.write(chunk)
+                            chunk_progress[index] += len(chunk)
+        except Exception as e:
+            if not self._stop_event.is_set():
+                raise e
+
+    def _download_google_drive(self) -> None:
+        from .gdrive_handler import GoogleDriveHandler
+        match = GoogleDriveHandler.FILE_REGEX.search(self.url)
+        if not match or "/folders/" in self.url:
+            raise RuntimeError("Buka folder Google Drive melalui Analisis URL lalu pilih berkas di dalamnya.")
+        with requests.Session() as session:
+            response = GoogleDriveHandler.open_file(match.group(1), self.url, session, self.headers)
+            try:
+                info = GoogleDriveHandler.file_metadata(response, match.group(1), self.url)
+                self.filename = info["filename"]
+                self.filepath = str(Path(self.filepath).with_name(self.filename))
+                self.filesize = info["filesize"]
+                self.downloaded_bytes = 0
+                self.num_chunks = 1
+                self.can_resume = False
+                self.chunks_data = [{"num": 1, "start": 0, "end": max(0, self.filesize - 1),
+                                     "total": self.filesize, "downloaded": 0, "percent": 0,
+                                     "status": "Menerima data..."}]
+                self._notify_progress()
+                final_path = self.filepath
+                self.filepath = final_path + ".part"
+                try:
+                    self._download_single_stream({}, response=response)
+                finally:
+                    self.filepath = final_path
+                if not self._stop_event.is_set():
+                    os.replace(final_path + ".part", final_path)
+                    self.filesize = self.downloaded_bytes
+                    self.chunks_data[0].update(downloaded=self.downloaded_bytes, percent=100, status="Selesai")
+            finally:
+                response.close()
+
+    def _download_single_stream(self, headers: Dict[str, str], response=None) -> None:
+        last_time = time.time()
+        last_bytes = 0
+        last_db_update = 0
+
+        with (response if response is not None else requests.get(self.url, headers=headers, stream=True, timeout=25)) as r:
+            r.raise_for_status()
+
+            if not self.filesize and r.headers.get("Content-Length"):
+                try:
+                    self.filesize = int(r.headers.get("Content-Length"))
+                except (ValueError, TypeError):
+                    pass
+
+            cd = r.headers.get("Content-Disposition", "")
+            if cd and "filename" in cd:
+                m = re.search(r'filename\*=UTF-8\'\'([^;]+)|filename="([^"]+)"|filename=([^;]+)', cd, re.I)
+                if m:
+                    extracted = m.group(1) or m.group(2) or m.group(3)
+                    import urllib.parse
+                    extracted = urllib.parse.unquote(extracted.strip().strip('"\''))
+                    if extracted and extracted != self.filename and not self.filename.endswith((".zip", ".rar", ".7z")):
+                        old_cat_folder = Path(self.filepath).parent
+                        self.filename = sanitize_filename(extracted)
+                        self.filepath = str(old_cat_folder / self.filename)
+
+            with open(self.filepath, "wb") as f:
+                for chunk in r.iter_content(chunk_size=CHUNK_BUFFER_SIZE):
+                    if self._stop_event.is_set():
+                        return
+                    if chunk:
+                        f.write(chunk)
+                        self.downloaded_bytes += len(chunk)
+
+                        now = time.time()
+                        if now - last_time >= 0.3:
+                            elapsed = now - last_time
+                            self.speed = (self.downloaded_bytes - last_bytes) / elapsed if elapsed > 0 else 0
+                            last_bytes = self.downloaded_bytes
+                            last_time = now
+
+                            if self.filesize > 0:
+                                self.progress = round((self.downloaded_bytes / self.filesize) * 100.0, 1)
+                                remaining = self.filesize - self.downloaded_bytes
+                                self.eta = int(remaining / self.speed) if self.speed > 0 else 0
+                            if response is not None and self.chunks_data:
+                                self.chunks_data[0].update(downloaded=self.downloaded_bytes, percent=self.progress)
+                            self._notify_progress()
+
+                            if now - last_db_update >= 1.0:
+                                try:
+                                    from .database import DatabaseManager
+                                    DatabaseManager().update_progress(
+                                        self.task_id, self.downloaded_bytes, self.filesize,
+                                        self.speed, self.eta, self.progress
+                                    )
+                                except Exception:
+                                    pass
+                                last_db_update = now
+
+                if response is not None and self.filesize and self.downloaded_bytes != self.filesize:
+                    raise RuntimeError("Unduhan Google Drive belum lengkap. Coba lagi.")
+
+        if not self._stop_event.is_set():
+            if not self.filesize or self.filesize <= 0:
+                self.filesize = self.downloaded_bytes
+            self.progress = 100.0
+            self.speed = 0.0
+            self.eta = 0
+            if self.chunks_data:
+                for c in self.chunks_data:
+                    c["status"] = "Selesai"
+                    c["percent"] = 100.0
+                    c["downloaded"] = c.get("total", 0)
+            self._notify_progress()
+            try:
+                from .database import DatabaseManager
+                DatabaseManager().update_file_info(self.task_id, self.filepath, self.filename, self.filesize)
+            except Exception:
+                pass
