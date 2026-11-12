@@ -2,6 +2,7 @@
 
 pub mod db;
 pub mod engine;
+pub mod manager;
 pub mod naming;
 pub mod settings;
 pub mod protocol;
