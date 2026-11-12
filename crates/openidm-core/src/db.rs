@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rusqlite::types::ValueRef;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
@@ -45,9 +46,26 @@ const COLUMNS: &str = "id, url, title, filename, filepath, filesize, downloaded_
                        completed_at, headers";
 
 fn from_row(row: &Row) -> rusqlite::Result<TaskRow> {
-    let text = |i: usize| row.get::<_, Option<String>>(i).map(Option::unwrap_or_default);
-    let int = |i: usize| row.get::<_, Option<i64>>(i).map(|v| v.unwrap_or(0).max(0) as u64);
-    let real = |i: usize| row.get::<_, Option<f64>>(i).map(Option::unwrap_or_default);
+    // SQLite columns are loosely typed and older versions wrote whole numbers as REAL or text,
+    // so every value is coerced instead of trusted.
+    let number = |i: usize| -> rusqlite::Result<f64> {
+        Ok(match row.get_ref(i)? {
+            ValueRef::Integer(v) => v as f64,
+            ValueRef::Real(v) => v,
+            ValueRef::Text(t) => std::str::from_utf8(t).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0.0),
+            _ => 0.0,
+        })
+    };
+    let text = |i: usize| -> rusqlite::Result<String> {
+        Ok(match row.get_ref(i)? {
+            ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+            ValueRef::Integer(v) => v.to_string(),
+            ValueRef::Real(v) => v.to_string(),
+            _ => String::new(),
+        })
+    };
+    let int = |i: usize| number(i).map(|v| if v.is_finite() && v > 0.0 { v as u64 } else { 0 });
+    let real = |i: usize| number(i).map(|v| if v.is_finite() { v } else { 0.0 });
     Ok(TaskRow {
         id: text(0)?,
         url: text(1)?,
@@ -66,7 +84,10 @@ fn from_row(row: &Row) -> rusqlite::Result<TaskRow> {
         error_message: text(14)?,
         request_id: text(15)?,
         created_at: real(16)?,
-        completed_at: row.get(17)?,
+        completed_at: match row.get_ref(17)? {
+            ValueRef::Null => None,
+            _ => Some(real(17)?),
+        },
         headers: serde_json::from_str(&text(18)?).unwrap_or_default(),
         can_resume: true,
     })
@@ -281,6 +302,28 @@ mod tests {
         assert_eq!(headers["Referer"], "r");
         assert!(db.delete("a").unwrap());
         assert!(!db.delete("a").unwrap());
+    }
+
+    /// The Python core wrote some whole numbers as REAL and left optional columns NULL.
+    #[test]
+    fn legacy_rows_with_loose_column_types_still_load() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x.db");
+        let db = Db::open(&p).unwrap();
+        db.insert(&row("ok", "completed", 1.0)).unwrap();
+        rusqlite::Connection::open(&p)
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO downloads (id,url,title,filename,filepath,filesize,downloaded_bytes,progress,speed,eta,status,created_at)
+                 VALUES ('loose','https://a/b','T','b.zip','C:/x/b.zip', 654400000.0, 1234.0, 0, '12.5', 3.7, 'error', 2);
+                 UPDATE downloads SET thumbnail = NULL, headers = NULL, category = NULL WHERE id = 'loose';",
+            )
+            .unwrap();
+        let loose = db.get("loose").unwrap().unwrap();
+        assert_eq!((loose.filesize, loose.downloaded_bytes, loose.eta), (654_400_000, 1234, 3));
+        assert_eq!((loose.progress, loose.speed, loose.created_at), (0.0, 12.5, 2.0));
+        assert_eq!((loose.thumbnail.as_str(), loose.category.as_str()), ("", ""));
+        assert_eq!(db.list(None, None).unwrap().len(), 2, "one odd row must not hide the others");
     }
 
     #[test]

@@ -25,6 +25,7 @@ tokio = { version = "1", features = ["sync", "time", "net", "io-util", "rt"] }
 fs4 = "0.13"
 url = "2"
 winreg = "0.55"
+tokio-util = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

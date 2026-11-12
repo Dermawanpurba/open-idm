@@ -1,6 +1,140 @@
 //! Decides what happens to a request from the browser extension. No Tauri types here, so it is testable.
 
-// IMPL
+use std::future::Future;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use openidm_core::manager::{Manager, NewTask};
+use openidm_core::naming::{category_for, http_url, resolve_filename};
+use openidm_core::protocol::{CaptureItem, Decision, Request, Response};
+
+const INVALID_URL: &str = "Tautan tidak valid.";
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Choice {
+    Start,
+    Later,
+    Cancel,
+}
+
+/// What the confirmation dialog shows.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Suggested {
+    pub filename: String,
+    pub category: &'static str,
+    pub dir: PathBuf,
+    /// Site the file comes from (host only; the full URL may carry tokens).
+    pub host: String,
+    pub filesize: u64,
+}
+
+/// Asks the user what to do with a download taken over from the browser.
+pub trait Prompter: Send + Sync {
+    /// Returns the choice and, when the user edited it, the new filename.
+    fn ask(&self, key: &str, suggested: &Suggested) -> impl Future<Output = (Choice, Option<String>)> + Send;
+}
+
+pub trait UiHooks: Send + Sync {
+    /// Brings the main window forward, optionally opening "Tambah URL" with `add_url` filled in.
+    fn show_main(&self, add_url: Option<String>);
+}
+
+static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
+
+fn new_task(item: &CaptureItem, url: &url::Url, filename: Option<String>, request_id: &str) -> NewTask {
+    let mut headers = item.headers.clone();
+    let has_referer = headers.keys().any(|k| k.eq_ignore_ascii_case("referer"));
+    if let (false, Some(referrer)) = (has_referer, item.referrer.as_deref().and_then(http_url)) {
+        headers.insert("Referer".into(), referrer.to_string());
+    }
+    NewTask {
+        url: url.to_string(),
+        filename,
+        filesize: item.filesize,
+        headers,
+        request_id: Some(request_id.to_string()),
+        ..Default::default()
+    }
+}
+
+/// Handles one request from the browser extension and produces its reply.
+pub async fn handle<P: Prompter, U: UiHooks>(request: Request, m: &Arc<Manager>, prompter: &P, ui: &U) -> Response {
+    match request {
+        Request::Ping { id } => Response {
+            id,
+            ok: true,
+            version: Some(env!("CARGO_PKG_VERSION").into()),
+            capabilities: vec!["capture".into(), "add".into(), "show".into()],
+            ..Default::default()
+        },
+        Request::Show { id, add_url } => {
+            ui.show_main(add_url.as_deref().and_then(http_url).map(|u| u.to_string()));
+            Response { id, ok: true, ..Default::default() }
+        }
+        Request::Add { id, item } => {
+            let Some(url) = http_url(&item.url) else { return Response::error(id, INVALID_URL) };
+            match m.add(new_task(&item, &url, item.filename.clone(), &id)) {
+                Ok(row) => {
+                    ui.show_main(None);
+                    Response { id, ok: true, task_id: Some(row.id), ..Default::default() }
+                }
+                Err(message) => Response::error(id, message),
+            }
+        }
+        Request::Capture { id, item } => {
+            let Some(url) = http_url(&item.url) else { return Response::error(id, INVALID_URL) };
+            let settings = m.settings();
+            let filename = resolve_filename(item.filename.as_deref(), None, &url);
+            let (choice, edited) = if settings.confirm_dialog {
+                let category = category_for(&filename);
+                let suggested = Suggested {
+                    dir: settings.download_dir.join(category),
+                    category,
+                    host: match url.port() {
+                        Some(port) => format!("{}:{port}", url.host_str().unwrap_or("")),
+                        None => url.host_str().unwrap_or("").to_string(),
+                    },
+                    filesize: item.filesize,
+                    filename: filename.clone(),
+                };
+                let key = NEXT_KEY.fetch_add(1, Ordering::Relaxed).to_string();
+                prompter.ask(&key, &suggested).await
+            } else {
+                (Choice::Start, None)
+            };
+            let decided = |decision| Response { id: id.clone(), ok: true, decision: Some(decision), ..Default::default() };
+            let mut task = new_task(&item, &url, Some(edited.unwrap_or(filename)), &id);
+            match choice {
+                Choice::Cancel => decided(Decision::Declined),
+                Choice::Later => {
+                    task.start_paused = true;
+                    match m.add(task) {
+                        Ok(row) => Response { task_id: Some(row.id), ..decided(Decision::Later) },
+                        Err(message) => Response::error(id, message),
+                    }
+                }
+                Choice::Start => {
+                    // Skip the queue: the browser copy stays paused until this is confirmed.
+                    task.immediate = true;
+                    let row = match m.add(task) {
+                        Ok(row) => row,
+                        Err(message) => return Response::error(id, message),
+                    };
+                    ui.show_main(None);
+                    match m.wait_first_byte(&row.id).await {
+                        Ok(()) => Response { task_id: Some(row.id), ..decided(Decision::Accepted) },
+                        Err(message) => {
+                            // The browser takes the download back, so leave no failed entry here.
+                            m.delete(&row.id, false);
+                            Response { error: Some(message), ..decided(Decision::Failed) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 #[path = "../../crates/openidm-core/tests/support/mod.rs"]

@@ -199,6 +199,18 @@ pub async fn quit_app(app: AppHandle, m: Mgr<'_>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn browser_status() -> crate::register::BrowserStatus {
+    crate::register::status(&crate::data_dir())
+}
+
+#[tauri::command]
+pub fn register_browser() -> Result<crate::register::BrowserStatus, String> {
+    let dir = crate::data_dir();
+    crate::register::register(&dir)?;
+    Ok(crate::register::status(&dir))
+}
+
+#[tauri::command]
 pub fn win_minimize(window: WebviewWindow) {
     let _ = window.minimize();
 }

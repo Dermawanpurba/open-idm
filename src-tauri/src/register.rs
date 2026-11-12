@@ -1,6 +1,76 @@
 //! Registers the Native Messaging host for Chrome and Edge (current user only, no admin rights).
 
-// IMPL
+use std::path::Path;
+
+use openidm_core::protocol::{EXTENSION_ID, HOST_NAME};
+use serde::Serialize;
+use serde_json::{json, Value};
+use winreg::enums::HKEY_CURRENT_USER;
+use winreg::RegKey;
+
+const MANIFEST_FILE: &str = "openidm-host.json";
+const HOST_EXE: &str = "openidm-host.exe";
+
+/// Registry locations Chrome and Edge read (under HKEY_CURRENT_USER).
+const BROWSERS: [(&str, &str); 2] = [
+    ("chrome", r"Software\Google\Chrome\NativeMessagingHosts\com.openidm.host"),
+    ("edge", r"Software\Microsoft\Edge\NativeMessagingHosts\com.openidm.host"),
+];
+
+#[derive(Serialize, Debug, Default)]
+pub struct BrowserStatus {
+    pub chrome: bool,
+    pub edge: bool,
+    /// False when `openidm-host.exe` is missing next to the app.
+    pub host_exists: bool,
+}
+
+/// The host manifest: only the OpenIDM extension may talk to the host.
+pub fn host_manifest(exe_dir: &Path) -> Value {
+    json!({
+        "name": HOST_NAME,
+        "description": "OpenIDM download manager",
+        "path": exe_dir.join(HOST_EXE),
+        "type": "stdio",
+        "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")],
+    })
+}
+
+pub fn register_in(exe_dir: &Path, browsers: &[(&str, &str)]) -> Result<(), String> {
+    let failed = || "Integrasi browser tidak bisa didaftarkan.".to_string();
+    let manifest = exe_dir.join(MANIFEST_FILE);
+    let body = serde_json::to_vec_pretty(&host_manifest(exe_dir)).map_err(|_| failed())?;
+    std::fs::write(&manifest, body).map_err(|_| failed())?;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    for (_, key) in browsers {
+        let (key, _) = hkcu.create_subkey(key).map_err(|_| failed())?;
+        key.set_value("", &manifest.to_string_lossy().into_owned()).map_err(|_| failed())?;
+    }
+    Ok(())
+}
+
+pub fn status_in(exe_dir: &Path, browsers: &[(&str, &str)]) -> BrowserStatus {
+    let expected = exe_dir.join(MANIFEST_FILE);
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let registered = |name: &str| {
+        browsers.iter().filter(|(browser, _)| *browser == name).any(|(_, key)| {
+            hkcu.open_subkey(key)
+                .and_then(|k| k.get_value::<String, _>(""))
+                .map(|value| Path::new(&value) == expected && expected.is_file())
+                .unwrap_or(false)
+        })
+    };
+    BrowserStatus { chrome: registered("chrome"), edge: registered("edge"), host_exists: exe_dir.join(HOST_EXE).is_file() }
+}
+
+/// Points Chrome and Edge at this folder's host. Run at every start so a moved folder keeps working.
+pub fn register(exe_dir: &Path) -> Result<(), String> {
+    register_in(exe_dir, &BROWSERS)
+}
+
+pub fn status(exe_dir: &Path) -> BrowserStatus {
+    status_in(exe_dir, &BROWSERS)
+}
 
 #[cfg(test)]
 mod tests {
