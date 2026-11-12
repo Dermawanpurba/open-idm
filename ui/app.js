@@ -136,12 +136,7 @@
   // Fetch Downloads from API
   async function fetchDownloads() {
     try {
-      let url = "/api/downloads?";
-      if (currentCategory !== "all") url += `category=${encodeURIComponent(currentCategory)}&`;
-      if (currentStatus !== "all") url += `status=${encodeURIComponent(currentStatus)}&`;
-
-      const res = await fetch(url);
-      const data = await res.json();
+      const data = await OpenIDMApi.listDownloads(currentCategory, currentStatus);
       if (data && data.success) {
         downloadsData = data.downloads || [];
         renderDownloads();
@@ -258,7 +253,7 @@
           </span>`;
       } else if (isError) {
         statusBadgeHtml = `
-          <span class="status-pill error" onclick="window.showErrorModal('${item.id}')" title="Klik untuk lihat detail error">
+          <span class="status-pill error" data-act="error" data-id="${escapeHtml(item.id)}" title="Klik untuk lihat detail error">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
             Error
           </span>`;
@@ -270,34 +265,34 @@
       let rowActionsHtml = '<div class="row-actions-group">';
       if (isCompleted) {
         rowActionsHtml += `
-          <button class="row-act-btn" onclick="window.openFile('${item.id}')" title="Buka Berkas" aria-label="Buka berkas">
+          <button class="row-act-btn" data-act="open-file" data-id="${escapeHtml(item.id)}" title="Buka Berkas" aria-label="Buka berkas">
             <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
           </button>`;
       } else if (isDownloading) {
         rowActionsHtml += `
-          <button class="row-act-btn" onclick="window.controlDownload('${item.id}', 'pause')" title="Jeda" aria-label="Jeda">
+          <button class="row-act-btn" data-act="pause" data-id="${escapeHtml(item.id)}" title="Jeda" aria-label="Jeda">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
           </button>`;
       } else if (isPaused || isError) {
         rowActionsHtml += `
-          <button class="row-act-btn" onclick="window.controlDownload('${item.id}', 'resume')" title="Lanjutkan" aria-label="Lanjutkan">
+          <button class="row-act-btn" data-act="resume" data-id="${escapeHtml(item.id)}" title="Lanjutkan" aria-label="Lanjutkan">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
           </button>`;
       }
 
       rowActionsHtml += `
-        <button class="row-act-btn" onclick="window.openFolder('${item.id}')" title="Buka Folder" aria-label="Buka folder">
+        <button class="row-act-btn" data-act="open-folder" data-id="${escapeHtml(item.id)}" title="Buka Folder" aria-label="Buka folder">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
         </button>
-        <button class="row-act-btn delete-act" onclick="window.deleteDownload('${item.id}')" title="Hapus" aria-label="Hapus">
+        <button class="row-act-btn delete-act" data-act="delete" data-id="${escapeHtml(item.id)}" title="Hapus" aria-label="Hapus">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
         </button>
       </div>`;
 
       html += `
-        <tr data-id="${item.id}" class="${isSelected ? 'row-selected' : ''}">
+        <tr data-id="${escapeHtml(item.id)}" class="${isSelected ? 'row-selected' : ''}">
           <td style="text-align: center;">
-            <input type="checkbox" class="custom-checkbox task-check" data-id="${item.id}" ${isSelected ? 'checked' : ''}>
+            <input type="checkbox" class="custom-checkbox task-check" data-id="${escapeHtml(item.id)}" ${isSelected ? 'checked' : ''}>
           </td>
           <td>
             <div class="file-cell">
@@ -377,14 +372,11 @@
   // Fetch Server Status & Disk Space
   async function checkServerStatus() {
     try {
-      const res = await fetch("/api/status");
-      const data = await res.json();
-      if (data && data.status === "online") {
+      const data = await OpenIDMApi.getStatus();
+      if (data && data.online) {
         if (engineDot) engineDot.style.background = "#34d399";
-        if (engineTitle) engineTitle.textContent = "Core Engine Terhubung";
-        if (engineSubtitle) {
-          engineSubtitle.textContent = data.ffmpeg_available ? "FFmpeg Siap" : "FFmpeg Tidak Ditemukan";
-        }
+        if (engineTitle) engineTitle.textContent = data.title;
+        if (engineSubtitle) engineSubtitle.textContent = data.subtitle;
 
         // Update Disk Usage
         if (data.disk) {
@@ -399,19 +391,15 @@
       }
     } catch (err) {
       if (engineDot) engineDot.style.background = "#f87171";
-      if (engineTitle) engineTitle.textContent = "Server Terputus";
-      if (engineSubtitle) engineSubtitle.textContent = "Port 6899 Offline";
+      if (engineTitle) engineTitle.textContent = "Mesin Unduh Terputus";
+      if (engineSubtitle) engineSubtitle.textContent = "Mulai ulang OpenIDM";
     }
   }
 
   // Global Actions
   window.controlDownload = async function (id, action) {
     try {
-      await fetch("/api/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, action }),
-      });
+      await OpenIDMApi.control(id, action);
       fetchDownloads();
     } catch (err) {
       console.error(`Gagal melakukan aksi ${action}:`, err);
@@ -421,11 +409,7 @@
   window.deleteDownload = async function (id) {
     if (!confirm("Hapus unduhan ini dari daftar?")) return;
     try {
-      await fetch("/api/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, action: "delete" }),
-      });
+      await OpenIDMApi.control(id, "delete");
       selectedTaskIds.delete(id);
       fetchDownloads();
     } catch (err) {
@@ -435,11 +419,7 @@
 
   window.openFile = async function (id) {
     try {
-      await fetch("/api/open-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
+      await OpenIDMApi.openFile(id);
     } catch (err) {
       console.error("Gagal membuka file:", err);
     }
@@ -447,11 +427,7 @@
 
   window.openFolder = async function (id) {
     try {
-      await fetch("/api/open-folder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
+      await OpenIDMApi.openFolder(id);
     } catch (err) {
       console.error("Gagal membuka folder:", err);
     }
@@ -475,6 +451,25 @@
   window.hideErrorModal = function () {
     if (errorModal) errorModal.classList.add("hidden");
   };
+
+  // Row actions (delegated: the app's CSP forbids inline handlers)
+  const rowActions = {
+    "error": id => window.showErrorModal(id),
+    "open-file": id => window.openFile(id),
+    "open-folder": id => window.openFolder(id),
+    "pause": id => window.controlDownload(id, "pause"),
+    "resume": id => window.controlDownload(id, "resume"),
+    "delete": id => window.deleteDownload(id),
+  };
+  if (downloadsList) {
+    downloadsList.addEventListener("click", (e) => {
+      const target = e.target.closest("[data-act]");
+      if (target && rowActions[target.dataset.act]) rowActions[target.dataset.act](target.dataset.id);
+    });
+  }
+  document.querySelectorAll("[data-close-error]").forEach(el => {
+    el.addEventListener("click", () => window.hideErrorModal());
+  });
 
   // Checkbox Selection Events
   if (downloadsList) {
@@ -529,11 +524,7 @@
       if (count === 0) return;
       if (!confirm(`Hapus ${count} unduhan terpilih dari daftar?`)) return;
       for (const id of Array.from(selectedTaskIds)) {
-        await fetch("/api/control", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, action: "delete" }),
-        });
+        await OpenIDMApi.control(id, "delete");
         selectedTaskIds.delete(id);
       }
       fetchDownloads();
@@ -546,7 +537,7 @@
       if (downloadsData.length > 0) {
         window.openFolder(downloadsData[0].id);
       } else {
-        alert("Folder unduhan berada di: open-idm/downloads");
+        OpenIDMApi.openDownloadDir().then(r => { if (r && r.success === false) alert(r.error); });
       }
     });
   }
@@ -628,14 +619,9 @@
       btnFetchInfo.textContent = "Menganalisis...";
 
       try {
-        const res = await fetch("/api/info", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
-        const data = await res.json();
+        const data = await OpenIDMApi.info(url);
         if (!data.success || !data.info) {
-          alert("Gagal membaca video: " + (data.error || "Format tidak didukung"));
+          alert(data.error || "Tautan tidak bisa dianalisis.");
           return;
         }
 
@@ -698,7 +684,7 @@
           selectCategory.value = selectedVideoInfo.category;
         }
       } catch (err) {
-        alert("Koneksi gagal ke server OpenIDM: " + err.message);
+        alert("Tautan tidak bisa dianalisis: " + err.message);
       } finally {
         btnFetchInfo.disabled = false;
         btnFetchInfo.textContent = "Analisis URL";
@@ -747,17 +733,12 @@
       btnStartDownload.textContent = "Menambahkan...";
 
       try {
-        const res = await fetch("/api/download", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
+        const data = await OpenIDMApi.download(payload);
         if (data.success) {
           hideModal();
           fetchDownloads();
         } else {
-          alert("Gagal menambahkan unduhan: " + (data.error || ""));
+          alert(data.error || "Unduhan tidak bisa ditambahkan.");
         }
       } catch (err) {
         alert("Terjadi kesalahan: " + err.message);
@@ -771,9 +752,14 @@
   // Window Controls
   if (btnWinClose) {
     btnWinClose.addEventListener("click", async () => {
+      if (OpenIDMApi.native) {
+        // The desktop app keeps running in the tray so downloads continue.
+        OpenIDMApi.window.hide();
+        return;
+      }
       if (confirm("Tutup aplikasi OpenIDM?")) {
         try {
-          await fetch("/api/shutdown", { method: "POST" });
+          await OpenIDMApi.quit();
         } catch (e) {}
         window.close();
       }
@@ -781,19 +767,11 @@
   }
 
   if (btnWinMin) {
-    btnWinMin.addEventListener("click", () => {
-      window.blur();
-    });
+    btnWinMin.addEventListener("click", () => OpenIDMApi.window.minimize());
   }
 
   if (btnWinMax) {
-    btnWinMax.addEventListener("click", () => {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      } else {
-        document.exitFullscreen().catch(() => {});
-      }
-    });
+    btnWinMax.addEventListener("click", () => OpenIDMApi.window.toggleMaximize());
   }
 
   // Modals About / Settings
@@ -804,8 +782,9 @@
     if (aboutModal) aboutModal.classList.add("hidden");
   }
 
-  if (btnSettings) btnSettings.addEventListener("click", showAbout);
-  if (navBtnSettings) navBtnSettings.addEventListener("click", showAbout);
+  const openSettings = () => (window.OpenIDMSettings ? window.OpenIDMSettings.open() : showAbout());
+  if (btnSettings) btnSettings.addEventListener("click", openSettings);
+  if (navBtnSettings) navBtnSettings.addEventListener("click", openSettings);
   if (navBtnAbout) navBtnAbout.addEventListener("click", showAbout);
   if (btnCloseAbout) btnCloseAbout.addEventListener("click", hideAbout);
   if (btnOkAbout) btnOkAbout.addEventListener("click", hideAbout);
@@ -821,6 +800,12 @@
       btnViewList.classList.remove("active");
     });
   }
+
+  // "Tambah URL" requested by the browser extension
+  OpenIDMApi.onAddUrl(url => {
+    showModal();
+    if (inputUrl && url) inputUrl.value = url;
+  });
 
   // Initial Execution & Polling
   fetchDownloads();

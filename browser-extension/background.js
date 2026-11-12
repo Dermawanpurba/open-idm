@@ -1,5 +1,6 @@
-/* OpenIDM MV3 worker. Downloads outlive this worker. */
-importScripts("shared.js");
+/* OpenIDM MV3 worker. Downloads outlive this worker.
+   Files go to the OpenIDM app over Native Messaging; video pages and streams still use the legacy core over HTTP. */
+importScripts("shared.js", "native.js");
 const API = "http://127.0.0.1:6899/api";
 const { httpUrl, mediaKind, isDirect, safeFilename, corePage, defaults } = OpenIDM;
 const requestHeaders = new Map();
@@ -53,12 +54,21 @@ async function api(path, body, timeout = 25000) {
   }
   return data;
 }
-async function status() {
+/** The legacy Python core (video pages, streams, Drive folders). */
+async function legacyStatus() {
   try {
     const data = await api("/status", null, 1800);
     return { online: data.app === "OpenIDM Core" && data.status === "online", data };
   } catch { return { online: false }; }
 }
+/** The desktop app. Asking starts it when it is not running. */
+async function appStatus() {
+  try {
+    const reply = await OpenIDMNative.request({ type: "ping" }, { timeout: 8000 });
+    return { online: true, version: reply.version };
+  } catch { return { online: false }; }
+}
+const legacyOffline = "Video dan folder Google Drive masih memakai OpenIDM Legacy. Jalankan legacy\\OpenIDM.exe, lalu coba lagi.";
 async function browserDownload(payload, options) {
   const filename = safeFilename(payload.filename);
   browserStartedUrls.add(payload.url);
@@ -87,14 +97,22 @@ async function download(payload, tabId, sender = {}) {
     if (!direct) throw new Error("Tautan ini memerlukan OpenIDM Desktop. Pilih mode Otomatis atau Desktop, lalu jalankan OpenIDM.exe.");
     return browserDownload({ ...payload, url }, options);
   }
-  const core = await status();
-  if (!core.online) {
-    if (mode === "auto" && direct) return browserDownload({ ...payload, url }, options);
-    throw new Error("OpenIDM Desktop belum aktif. Jalankan OpenIDM.exe, lalu coba lagi. File langsung juga bisa memakai mode Chrome.");
-  }
   // Headers belong to this exact resource, never an unrelated request in its tab.
   const headers = { ...(match?.headers || {}) };
   if (!headers.Referer && httpUrl(sender.tab?.url)) headers.Referer = sender.tab.url;
+  if (direct) {
+    try {
+      const reply = await OpenIDMNative.request({ type: "add", url, filename: safeFilename(payload.filename) || undefined,
+        filesize: Math.max(0, Number(payload.filesize) || 0), headers });
+      return { success: true, engine: "app", task_id: reply.task_id };
+    } catch (error) {
+      // A refusal is final: retrying through Chrome could fetch something the app rejected for a reason.
+      if (error.code !== "app_unavailable") throw error;
+      if (mode === "auto") return browserDownload({ ...payload, url }, options);
+      throw new Error("OpenIDM tidak bisa dibuka. Buka OpenIDM sekali, lalu coba lagi.");
+    }
+  }
+  if (!(await legacyStatus()).online) throw new Error(legacyOffline);
   const body = {
     url, title: String(payload.title || "").slice(0, 300) || undefined,
     filename: safeFilename(payload.filename) || undefined,
@@ -156,7 +174,10 @@ async function handle(request, sender) {
       const media = await getMedia(tabId);
       return { media: media.filter(item => isUI(sender) || item.frameId === sender.frameId).map(({ headers, ...item }) => item) };
     }
-    case "CHECK_SERVER": return status();
+    case "CHECK_SERVER": {
+      const [app, legacy] = await Promise.all([appStatus(), legacyStatus()]);
+      return { ...app, legacy: legacy.online };
+    }
     case "GET_SETTINGS": return { settings: await settings() };
     case "SAVE_SETTINGS": {
       if (!isUI(sender)) throw new Error("Pengaturan hanya dapat diubah dari popup.");
@@ -174,7 +195,11 @@ async function handle(request, sender) {
     }
     case "OPEN_DASHBOARD": {
       const url = httpUrl(request.url);
-      await chrome.tabs.create({ url: `http://127.0.0.1:6899/${url ? `?addUrl=${encodeURIComponent(url)}` : ""}` });
+      try {
+        await OpenIDMNative.request({ type: "show", ...(url ? { add_url: url } : {}) }, { timeout: 8000 });
+      } catch {
+        throw new Error("OpenIDM tidak bisa dibuka. Buka OpenIDM sekali, lalu coba lagi.");
+      }
       return { success: true };
     }
     case "GET_DOWNLOADS": {
@@ -213,7 +238,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   void download({ url: info.linkUrl || info.srcUrl || info.pageUrl,
     kind: ["video", "audio"].includes(info.mediaType) ? "direct" : undefined }, tab?.id, { tab }).then(result => {
     return chrome.notifications.create({ type: "basic", iconUrl: "icons/icon128.png", title: "OpenIDM",
-      message: result.engine === "browser" ? "Unduhan dimulai di Chrome." : "Unduhan dikirim ke OpenIDM Desktop." });
+      message: result.engine === "browser" ? "Unduhan dimulai di Chrome." : "Unduhan dikirim ke OpenIDM." });
   }).catch(error => {
     void chrome.notifications.create({ type: "basic", iconUrl: "icons/icon128.png", title: "OpenIDM — unduhan belum dimulai", message: error.message });
   });

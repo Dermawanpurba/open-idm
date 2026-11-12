@@ -105,6 +105,14 @@ pub fn category_for(filename: &str) -> &'static str {
     }
 }
 
+pub const CATEGORIES: [&str; 6] = ["Video", "Music", "Documents", "Programs", "Compressed", "General"];
+
+/// Maps untrusted input to a known category; anything else is rejected.
+pub fn valid_category(input: Option<&str>) -> Option<&'static str> {
+    let input = input?;
+    CATEGORIES.iter().copied().find(|c| *c == input)
+}
+
 /// Returns `dir/filename`, or `dir/stem (n).ext` when the file or its `.part` already exists.
 pub fn unique_path(dir: &Path, filename: &str) -> PathBuf {
     let taken = |p: &Path| {

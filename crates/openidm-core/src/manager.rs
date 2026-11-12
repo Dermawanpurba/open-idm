@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::db::{now, Db, TaskRow};
 use crate::engine::{self, EngineConfig, Job, Outcome, Progress};
-use crate::naming::{category_for, http_url, is_inside, resolve_filename, unique_path};
+use crate::naming::{category_for, http_url, is_inside, resolve_filename, unique_path, valid_category};
 use crate::protocol::filter_headers;
 use crate::settings::Settings;
 
@@ -24,6 +24,8 @@ const SPEED_WINDOW: Duration = Duration::from_secs(5);
 pub struct NewTask {
     pub url: String,
     pub filename: Option<String>,
+    /// Folder category chosen by the user; unknown values fall back to the file type.
+    pub category: Option<String>,
     pub filesize: u64,
     pub headers: BTreeMap<String, String>,
     pub request_id: Option<String>,
@@ -128,7 +130,7 @@ impl Manager {
     pub fn add(self: &Arc<Self>, task: NewTask) -> Result<TaskRow, String> {
         let url = http_url(&task.url).ok_or("Tautan tidak valid.")?;
         let filename = resolve_filename(task.filename.as_deref(), None, &url);
-        let category = category_for(&filename);
+        let category = valid_category(task.category.as_deref()).unwrap_or_else(|| category_for(&filename));
         let root = self.settings().download_dir;
         let dir = root.join(category);
         let _ = std::fs::create_dir_all(&dir);

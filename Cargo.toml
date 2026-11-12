@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/openidm-core", "crates/openidm-host"]
+members = ["crates/openidm-core", "crates/openidm-host", "src-tauri"]
 
 [workspace.package]
 version = "2.0.0"

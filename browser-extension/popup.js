@@ -2,9 +2,9 @@
 const $ = id => document.getElementById(id);
 let currentTab = null;
 const modeHelp = {
-  auto: "Download website otomatis masuk desktop saat aktif; jika belum aktif, tetap memakai browser.",
-  browser: "File langsung diunduh oleh Chrome. Streaming dan halaman video memerlukan desktop.",
-  core: "Download website diarahkan ke desktop. Jalankan OpenIDM.exe terlebih dahulu."
+  auto: "Unduhan dari website otomatis diambil alih OpenIDM. Jika OpenIDM tidak bisa dibuka, unduhan tetap berjalan di browser.",
+  browser: "Semua unduhan tetap di browser. OpenIDM tidak mengambil alih apa pun.",
+  core: "Unduhan dari website selalu dikirim ke OpenIDM."
 };
 async function send(message) {
   const result = await chrome.runtime.sendMessage(message);
@@ -33,19 +33,19 @@ async function startDownload(payload, button) {
   button.textContent = "Memulai…";
   try {
     const result = await send({ action: "DOWNLOAD_VIDEO", tabId: currentTab?.id, payload });
-    feedback(result.engine === "browser" ? "Unduhan dimulai di Chrome." : "Unduhan masuk antrean desktop. Pantau di Dashboard desktop.");
+    feedback(result.engine === "browser" ? "Unduhan dimulai di Chrome." : "Unduhan dikirim ke OpenIDM.");
     await loadDownloads();
   } catch (error) { feedback(error.message, true); }
   finally { button.disabled = false; button.textContent = label; }
 }
 async function checkStatus() {
-  $("status-text").textContent = "Memeriksa desktop…";
+  $("status-text").textContent = "Memeriksa OpenIDM…";
   const result = await send({ action: "CHECK_SERVER" });
   $("status-text").className = result.online ? "online" : "offline";
-  $("status-text").textContent = result.online ? "Desktop terhubung" : "Desktop belum aktif";
+  $("status-text").textContent = result.online ? "OpenIDM terhubung" : "OpenIDM belum terhubung";
   $("connection-help").textContent = result.online
-    ? `${result.data.active_downloads} unduhan aktif di desktop.`
-    : "Jalankan OpenIDM.exe agar download website otomatis masuk ke desktop.";
+    ? (result.legacy ? "Unduhan berkas dan video siap." : "Unduhan berkas siap. Untuk video, jalankan legacy\\OpenIDM.exe.")
+    : "Buka OpenIDM.exe sekali agar browser mengenalinya, lalu klik Periksa lagi.";
 }
 async function loadMedia() {
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });

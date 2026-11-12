@@ -1,8 +1,9 @@
-/* Transfer real browser downloads only after the desktop has begun receiving data. */
+/* Hand real browser downloads to the OpenIDM app. A download is never lost and never fetched twice:
+   the browser copy stays paused until the app has confirmed it, and resumes on any other outcome. */
 const capturePrefix = "capture:";
 const capturing = new Set();
 const captureJobs = new Map();
-const dashboardUrl = "http://127.0.0.1:6899/";
+const safeDanger = ["safe", "accepted", "allowlistedByPolicy", "deepScannedSafe"];
 
 async function captureNotice(message) {
   try {
@@ -10,109 +11,79 @@ async function captureNotice(message) {
   } catch { /* Notifications can be disabled by the user. */ }
 }
 
-async function showCapturedDashboard() {
-  return serial(async () => {
-    const tabs = await chrome.tabs.query({ url: `${dashboardUrl}*` });
-    if (tabs.length) await chrome.tabs.update(tabs[0].id, { active: true });
-    else await chrome.tabs.create({ url: dashboardUrl });
-  });
+/** Gives the download back to the browser. */
+async function releaseCapture(id) {
+  try { await chrome.downloads.resume(id); } catch { /* It may already have completed or been removed. */ }
+  await chrome.storage.local.remove(capturePrefix + id);
 }
 
-async function capturedTask(requestId) {
-  const data = await api(`/downloads?request_id=${encodeURIComponent(requestId)}`, null, 4000);
-  return data.downloads?.[0];
-}
-
-async function settleCapture(record, wait = false) {
-  let task;
-  for (let attempt = 0; attempt < (wait ? 40 : 1); attempt++) {
-    task = await capturedTask(record.requestId);
-    if (task?.status === "error" || task?.status === "completed" || task?.downloaded_bytes > 0) break;
-    if (wait) await new Promise(resolve => setTimeout(resolve, 250));
-  }
-  if (task?.status === "error") {
-    await chrome.downloads.resume(record.id);
-    await chrome.storage.local.remove(capturePrefix + record.id);
-    await captureNotice("Website memerlukan unduhan melalui browser. Unduhan dilanjutkan di browser.");
-  } else if (task?.status === "completed" || task?.downloaded_bytes > 0) {
-    // Persist ownership before cancel: a worker restart must not start a second copy.
-    await chrome.storage.local.set({ [capturePrefix + record.id]: { ...record, phase: "accepted" } });
-    await chrome.downloads.cancel(record.id);
-    await chrome.storage.local.remove(capturePrefix + record.id);
-    await showCapturedDashboard();
-  } else {
-    await captureNotice("Menunggu konfirmasi OpenIDM. Unduhan browser dijeda agar tidak ganda. Periksa Dashboard atau lanjutkan dari daftar unduhan browser.");
-  }
+/** The app owns the file now: drop the browser copy and its entry in the downloads list. */
+async function dropBrowserCopy(id) {
+  try { await chrome.downloads.cancel(id); } catch { /* Already gone. */ }
+  try { await chrome.downloads.erase({ id }); } catch { /* Cosmetic only. */ }
+  await chrome.storage.local.remove(capturePrefix + id);
 }
 
 async function captureDownload(item) {
   const url = httpUrl(item.finalUrl || item.url);
   if (!url || item.byExtensionId || browserStartedUrls.has(url) || item.state !== "in_progress" || item.paused || capturing.has(item.id)) return;
-  if (new URL(url).origin === new URL(dashboardUrl).origin) return;
-  if (item.danger && !["safe", "accepted", "allowlistedByPolicy", "deepScannedSafe"].includes(item.danger)) return;
+  if (item.danger && !safeDanger.includes(item.danger)) return;
   capturing.add(item.id);
-  let record;
+  const storageKey = capturePrefix + item.id;
+  let paused = false;
   try {
     if ((await settings()).mode === "browser") return;
     await mutations;
     const { downloadResources = [] } = await chrome.storage.session.get("downloadResources");
     const resource = downloadResources.find(entry => entry.url === url && Date.now() - entry.timestamp < 300000);
+    // Uploads, form posts and token-authorised requests cannot be replayed outside the browser.
     if (resource?.requiresBrowser || (resource?.method && resource.method !== "GET")) return;
-    const storageKey = capturePrefix + item.id;
-    record = { id: item.id, phase: "preflight", requestId: `${chrome.runtime.id}:${item.id}:${item.startTime || ""}` };
-    await chrome.storage.local.set({ [storageKey]: record });
+
+    // Persist before pausing: if this worker dies, recovery must find and resume the download.
+    await chrome.storage.local.set({ [storageKey]: { id: item.id, phase: "submitting" } });
     await chrome.downloads.pause(item.id);
-    const core = await status();
-    if (!core.online || !core.data?.capabilities?.includes("browser-download-handoff")) {
-      await chrome.downloads.resume(item.id);
-      await chrome.storage.local.remove(storageKey);
-      await captureNotice(core.online
-        ? "Perbarui OpenIDM.exe agar mendukung pengalihan otomatis. Unduhan ini tetap dilanjutkan di browser."
-        : "OpenIDM belum aktif. Jalankan OpenIDM.exe; unduhan ini tetap dilanjutkan di browser.");
-      return;
-    }
-    record.phase = "submitting";
-    await chrome.storage.local.set({ [storageKey]: record });
-    const filename = safeFilename(item.filename) || resource?.filename || safeFilename(new URL(url).pathname.split("/").pop()) || "download_file";
+    paused = true;
+
+    const filename = safeFilename(item.filename) || resource?.filename || safeFilename(new URL(url).pathname.split("/").pop()) || "download";
     const headers = { ...(resource?.headers || {}) };
     if (!headers.Referer && httpUrl(item.referrer)) headers.Referer = item.referrer;
-    // Browser-provided HTTP download metadata is authoritative, including extensionless endpoints.
-    await api("/download", { url, filename, title: filename, category: "General", format_id: "direct",
-      filesize: Math.max(0, item.totalBytes || 0), headers, request_id: record.requestId });
-    await settleCapture(record, true);
-  } catch (error) {
-    if (record?.phase === "preflight" || (record && error.rejected)) {
-      try { await chrome.downloads.resume(item.id); } catch { /* It may already have completed. */ }
-      await chrome.storage.local.remove(capturePrefix + item.id);
-      if (error.rejected) await captureNotice("OpenIDM belum menerima unduhan ini. Unduhan dilanjutkan di browser.");
-    } else if (record) {
-      // A lost response can mean the desktop accepted it. Reconcile; never POST it twice.
-      try { await settleCapture(record, true); }
-      catch { await captureNotice("Konfirmasi OpenIDM terputus. Periksa Dashboard sebelum melanjutkan unduhan browser yang dijeda."); }
+    // No timeout: the app's confirmation dialog stays open for as long as the user needs.
+    const reply = await OpenIDMNative.request({ type: "capture", url, filename,
+      filesize: Math.max(0, item.totalBytes || 0), headers, referrer: httpUrl(item.referrer) || undefined });
+
+    if (reply.decision === "accepted" || reply.decision === "later") {
+      // Record ownership first so a restart finishes the cancel instead of resuming a second copy.
+      await chrome.storage.local.set({ [storageKey]: { id: item.id, phase: "accepted" } });
+      await dropBrowserCopy(item.id);
+    } else {
+      await releaseCapture(item.id);
+      if (reply.decision === "failed") {
+        await captureNotice(`${reply.error || "OpenIDM tidak bisa mengunduh berkas ini."} Unduhan dilanjutkan di browser.`);
+      }
     }
+  } catch (error) {
+    if (paused) await releaseCapture(item.id);
+    else await chrome.storage.local.remove(storageKey);
+    await captureNotice(error?.code === "app_unavailable"
+      ? "OpenIDM tidak bisa dibuka. Buka OpenIDM sekali untuk mendaftarkan integrasi; unduhan dilanjutkan di browser."
+      : "OpenIDM belum menerima unduhan ini. Unduhan dilanjutkan di browser.");
   } finally {
     capturing.delete(item.id);
   }
 }
 
+/** Settles captures left behind by a previous worker. Live captures are left alone. */
 async function recoverCaptures() {
   const saved = await chrome.storage.local.get(null);
   for (const [key, record] of Object.entries(saved)) {
-    if (!key.startsWith(capturePrefix)) continue;
+    if (!key.startsWith(capturePrefix) || capturing.has(record.id)) continue;
     try {
       const [item] = await chrome.downloads.search({ id: record.id });
-      if (!item || item.state !== "in_progress" || !item.paused) {
-        await chrome.storage.local.remove(key);
-      } else if (record.phase === "accepted") {
-        await chrome.downloads.cancel(record.id);
-        await chrome.storage.local.remove(key);
-      } else if (record.phase === "preflight") {
-        await chrome.downloads.resume(record.id);
-        await chrome.storage.local.remove(key);
-      } else {
-        await settleCapture(record);
-      }
-    } catch { /* Keep the recovery record until the desktop can be reached. */ }
+      if (!item || item.state !== "in_progress" || !item.paused) await chrome.storage.local.remove(key);
+      else if (record.phase === "accepted") await dropBrowserCopy(record.id);
+      // The port that would have carried the answer died with the old worker: hand it back.
+      else await releaseCapture(record.id);
+    } catch { /* Try again on the next alarm. */ }
   }
 }
 
@@ -123,10 +94,10 @@ function beginCapture(item) {
   return job;
 }
 
-// Hold filename finalization, including when onCreated already began this handoff.
 chrome.downloads.onCreated.addListener(item => {
   void beginCapture(item).catch(() => {});
 });
+// Hold filename finalization (and Chrome's "Save as" prompt) until the hand-off is decided.
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   void beginCapture(item).catch(() => {}).finally(() => suggest());
   return true;

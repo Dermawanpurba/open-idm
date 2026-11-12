@@ -12,8 +12,8 @@
 <body class="dark">
   <div class="window-shell">
     <!-- Top Header / Window Bar -->
-    <header class="app-header">
-      <div class="header-left">
+    <header class="app-header" data-tauri-drag-region>
+      <div class="header-left" data-tauri-drag-region>
         <div class="brand">
           <div class="brand-logo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -25,14 +25,14 @@
           <div class="brand-info">
             <div class="brand-title-row">
               <span class="brand-title">OpenIDM</span>
-              <span class="version-badge">v1.0</span>
+              <span class="version-badge">v2.0</span>
             </div>
             <div class="brand-subtitle">Internet Download Manager</div>
           </div>
         </div>
       </div>
 
-      <div class="header-center">
+      <div class="header-center" data-tauri-drag-region>
         <div class="search-container">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"></circle>
@@ -476,7 +476,8 @@
         <div class="form-group">
           <label for="select-category">Kategori Folder Penyimpanan:</label>
           <select id="select-category">
-            <option value="Video" selected>Video & Film</option>
+            <option value="" selected>Otomatis (dari jenis berkas)</option>
+            <option value="Video">Video &amp; Film</option>
             <option value="Music">Musik & Audio</option>
             <option value="Compressed">Arsip (ZIP / RAR)</option>
             <option value="Documents">Dokumen</option>
@@ -505,7 +506,7 @@
           </svg>
           <h3 id="error-modal-title">Detail Kendala Unduhan</h3>
         </div>
-        <button class="btn-close" onclick="hideErrorModal()" aria-label="Tutup">
+        <button class="btn-close" data-close-error aria-label="Tutup">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -519,7 +520,7 @@
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="hideErrorModal()">Tutup</button>
+        <button class="btn btn-secondary" data-close-error>Tutup</button>
         <button class="btn btn-primary" id="error-modal-retry">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="23 4 23 10 17 10"></polyline>
@@ -543,7 +544,7 @@
           </svg>
           <h3>Tentang OpenIDM</h3>
         </div>
-        <button class="btn-close" id="btn-close-about">
+        <button class="btn-close" id="btn-close-about" aria-label="Tutup">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -552,7 +553,7 @@
       </div>
       <div class="modal-body">
         <div style="text-align: center; padding: 12px 0 20px;">
-          <h2 style="font-size: 20px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px;">OpenIDM Standalone v1.0</h2>
+          <h2 style="font-size: 20px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px;">OpenIDM v2.0</h2>
           <p style="color: #94a3b8; font-size: 13px;">High Performance Multi-Threaded Download Manager</p>
         </div>
         <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.6; color: #cbd5e1;">
@@ -568,6 +569,84 @@
     </div>
   </div>
 
+  <!-- Modal Pengaturan (hanya di aplikasi desktop) -->
+  <div id="settings-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width: 540px;" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-header">
+        <div class="modal-header-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <h3 id="settings-title">Pengaturan</h3>
+        </div>
+        <button class="btn-close" id="btn-close-settings" aria-label="Tutup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="set-download-dir">Folder unduhan</label>
+          <div class="input-with-button">
+            <input type="text" id="set-download-dir" spellcheck="false" autocomplete="off">
+            <button type="button" id="btn-pick-folder" class="btn btn-secondary">Pilih folder</button>
+          </div>
+          <p class="field-hint">Berkas disimpan ke subfolder sesuai jenisnya (Video, Dokumen, Arsip, dan lainnya).</p>
+        </div>
+
+        <div class="form-group">
+          <label for="set-max-concurrent">Unduhan bersamaan</label>
+          <select id="set-max-concurrent">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+          </select>
+          <p class="field-hint">Unduhan lain menunggu giliran di antrean.</p>
+        </div>
+
+        <label class="switch-row" for="set-confirm">
+          <input type="checkbox" id="set-confirm" class="custom-checkbox">
+          <span>
+            <span class="switch-title">Tanya dulu sebelum mengambil unduhan dari browser</span>
+            <span class="switch-desc">Jika dimatikan, unduhan dari browser langsung berjalan di OpenIDM.</span>
+          </span>
+        </label>
+
+        <label class="switch-row" for="set-autostart">
+          <input type="checkbox" id="set-autostart" class="custom-checkbox">
+          <span>
+            <span class="switch-title">Jalankan OpenIDM saat Windows menyala</span>
+            <span class="switch-desc">OpenIDM menunggu di area notifikasi tanpa membuka jendela.</span>
+          </span>
+        </label>
+
+        <div class="integration-box">
+          <div class="integration-head">
+            <span class="switch-title">Integrasi browser</span>
+            <button type="button" id="btn-register-browser" class="btn btn-secondary btn-sm">Daftarkan ulang</button>
+          </div>
+          <div class="integration-row"><span>Google Chrome</span><span class="integration-state" id="int-chrome">Memeriksa</span></div>
+          <div class="integration-row"><span>Microsoft Edge</span><span class="integration-state" id="int-edge">Memeriksa</span></div>
+          <p class="field-hint">Pasang ekstensi dari folder <code>browser-extension</code> di samping OpenIDM.exe.</p>
+        </div>
+
+        <p class="field-error hidden" id="settings-error" role="alert"></p>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-quit-app">Keluar dari OpenIDM</button>
+        <span class="footer-spacer"></span>
+        <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Batal</button>
+        <button type="button" class="btn btn-primary" id="btn-save-settings">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="api.js"></script>
   <script src="app.js"></script>
+  <script src="settings.js"></script>
 </body>
 </html>

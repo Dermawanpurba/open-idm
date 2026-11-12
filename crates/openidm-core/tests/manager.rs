@@ -212,6 +212,22 @@ async fn duplicate_name_gets_suffix() {
 }
 
 #[tokio::test]
+async fn category_override_is_honoured_only_when_known() {
+    let s = serve(body(10), ok()).await;
+    let (d, m) = setup();
+    let chosen = m
+        .add(NewTask { url: format!("{}/song.zip", s.url), category: Some("Music".into()), start_paused: true, ..nt() })
+        .unwrap();
+    assert_eq!(chosen.category, "Music");
+    assert!(Path::new(&chosen.filepath).starts_with(d.path().join("dl").join("Music")));
+    let bogus = m
+        .add(NewTask { url: format!("{}/b.zip", s.url), category: Some("..\\..\\Windows".into()), start_paused: true, ..nt() })
+        .unwrap();
+    assert_eq!(bogus.category, "Compressed");
+    assert!(Path::new(&bogus.filepath).starts_with(d.path().join("dl").join("Compressed")));
+}
+
+#[tokio::test]
 async fn download_dir_unavailable() {
     let s = serve(body(10), ok()).await;
     let (d, m) = setup();
