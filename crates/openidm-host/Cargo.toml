@@ -1,0 +1,13 @@
+[package]
+name = "openidm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+openidm-core = { path = "../openidm-core" }
+tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync", "time"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }

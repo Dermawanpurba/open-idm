@@ -41,6 +41,40 @@ pub fn write_frame<W: Write>(w: &mut W, payload: &[u8]) -> io::Result<()> {
     w.flush()
 }
 
+/// Async twin of [`read_frame`], used on the named pipe.
+pub async fn read_frame_async<R: tokio::io::AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Vec<u8>>> {
+    use tokio::io::AsyncReadExt;
+    let mut len = [0u8; 4];
+    let mut filled = 0;
+    while filled < 4 {
+        match r.read(&mut len[filled..]).await? {
+            0 if filled == 0 => return Ok(None),
+            0 => return Err(io::ErrorKind::UnexpectedEof.into()),
+            n => filled += n,
+        }
+    }
+    let len = u32::from_le_bytes(len) as usize;
+    if len > MAX_FRAME {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+    }
+    let mut payload = vec![0u8; len];
+    r.read_exact(&mut payload).await?;
+    Ok(Some(payload))
+}
+
+/// Async twin of [`write_frame`].
+pub async fn write_frame_async<W: tokio::io::AsyncWrite + Unpin>(w: &mut W, payload: &[u8]) -> io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    if payload.len() > MAX_FRAME {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+    }
+    let mut frame = Vec::with_capacity(payload.len() + 4);
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(payload);
+    w.write_all(&frame).await?;
+    w.flush().await
+}
+
 #[derive(Deserialize, Clone, Debug)]
 pub struct CaptureItem {
     pub url: String,
@@ -141,6 +175,20 @@ mod tests {
         let mut c = std::io::Cursor::new(buf);
         assert_eq!(read_frame(&mut c).unwrap().unwrap(), b"{\"a\":1}");
         assert!(read_frame(&mut c).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn async_frames_interoperate_with_sync_frames() {
+        let mut sync_bytes = Vec::new();
+        write_frame(&mut sync_bytes, b"hello").unwrap();
+        let mut async_bytes = Vec::new();
+        write_frame_async(&mut async_bytes, b"hello").await.unwrap();
+        assert_eq!(sync_bytes, async_bytes);
+        let mut r = &sync_bytes[..];
+        assert_eq!(read_frame_async(&mut r).await.unwrap().unwrap(), b"hello");
+        assert!(read_frame_async(&mut r).await.unwrap().is_none());
+        let mut big = &((MAX_FRAME as u32) + 1).to_le_bytes()[..];
+        assert_eq!(read_frame_async(&mut big).await.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
