@@ -194,7 +194,8 @@ pub fn parse_info(value: &Value, url: &str) -> Result<VideoInfo, String> {
     let mut audio = false;
     for format in value["formats"].as_array().into_iter().flatten() {
         if format["has_drm"].as_bool() == Some(true) { continue; }
-        if format["vcodec"].as_str().is_some_and(|s| s != "none") {
+        // OK.ru and plain HLS manifests report no codec at all; only an explicit "none" means audio-only.
+        if format["vcodec"].as_str() != Some("none") {
             if let Some(height) = format["height"].as_u64() { if height > 0 && height <= 4320 { heights.push(height); } }
         }
         if format["acodec"].as_str().is_some_and(|s| s != "none") { audio = true; }
@@ -255,6 +256,13 @@ mod tests {
         assert_eq!(info.filename,"DemoVideo.mp4");
         assert_eq!(info.formats.iter().map(|f| f.format_id.as_str()).collect::<Vec<_>>(), vec!["best","video:720","audio"]);
         assert!(info.formats.iter().all(|f| f.has_audio));
+    }
+    #[test] fn formats_without_codec_info_still_offer_each_resolution() {
+        let info = parse_info(&json!({"title":"Episode 200","formats":[
+            {"format_id":"hd"},{"format_id":"hls-1198","height":480},{"format_id":"hls-2051","height":720},
+            {"format_id":"hls-3131","height":1080}]}), "https://ok.ru/video/1").unwrap();
+        assert_eq!(info.formats.iter().map(|f| f.format_id.as_str()).collect::<Vec<_>>(),
+            vec!["best","video:1080","video:720","video:480"]);
     }
     #[test] fn progress_handles_unknown_totals_and_bad_lines() {
         assert_eq!(parse_progress("__OPENIDM_PROGRESS__137|100|NA|250"),Some(("137".into(),100,250)));
