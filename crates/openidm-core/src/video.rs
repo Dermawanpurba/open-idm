@@ -85,8 +85,11 @@ impl Tools {
             .args(parallel_args(connections));
         if format == "audio" { command.args(["--extract-audio", "--audio-format", "m4a"]); }
         else { command.args(["--merge-output-format", "mp4", "--remux-video", "mp4"]); }
+        // A Referer from the embedding page (e.g. anichin) makes Dailymotion return no formats; yt-dlp's extractor sets its own.
+        let extractor = needs_extractor(job.url.as_str());
         for (name, value) in crate::protocol::filter_headers(&job.headers) {
-            if name != "Cookie" { command.arg("--add-header").arg(format!("{name}:{value}")); }
+            if name == "Cookie" || (extractor && name == "Referer") { continue; }
+            command.arg("--add-header").arg(format!("{name}:{value}"));
         }
         command.arg("--").arg(job.url.as_str()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|_| EngineError::Video("Helper video tidak bisa dijalankan.".into()))?;
